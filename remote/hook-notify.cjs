@@ -274,13 +274,21 @@ async function main() {
     const projectName = path.basename(currentDir);
     const sessionId = hookContext?.session_id;
 
-    // Handle session-start: create per-session Slack channel
+    // Handle session-start: reuse existing channel or create new one
     if (notificationType === 'session-start') {
         if (isPerSessionMode() && sessionId) {
             const manager = createChannelManager();
             const tmuxSession = detectTmuxSession();
-            await manager.getOrCreateChannel(sessionId, projectName, currentDir, tmuxSession);
-            console.log(`Per-session Slack channel created for ${projectName} (session: ${sessionId})`);
+
+            // Reuse existing channel if one is already active for this tmux session
+            const reused = manager.reuseChannelForTmuxSession(sessionId, tmuxSession);
+            if (reused) {
+                await manager.postToSessionChannel(sessionId, ':arrows_counterclockwise: New conversation started');
+                console.log(`Reusing Slack channel #${reused.channelName} for session ${sessionId}`);
+            } else {
+                await manager.getOrCreateChannel(sessionId, projectName, currentDir, tmuxSession);
+                console.log(`Per-session Slack channel created for ${projectName} (session: ${sessionId})`);
+            }
         }
         return;
     }

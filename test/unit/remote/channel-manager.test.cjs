@@ -910,3 +910,125 @@ describe('SlackChannelManager.postToThread', () => {
     assert.equal(result, false);
   });
 });
+
+describe('SlackChannelManager.reuseChannelForTmuxSession', () => {
+  let tempDir;
+  let manager;
+
+  beforeEach(() => {
+    tempDir = createTempDir();
+    const mapDir = path.join(tempDir, 'data');
+    fs.mkdirSync(mapDir, { recursive: true });
+    const { client } = createMockSlackClient();
+    manager = new SlackChannelManager({
+      botToken: 'xoxb-test',
+      channelMapPath: path.join(mapDir, 'channel-map.json'),
+    });
+    manager.client = client;
+  });
+
+  afterEach(() => {
+    removeTempDir(tempDir);
+  });
+
+  it('remaps new session to existing channel on same tmux session', () => {
+    const data = {
+      'old-sess': {
+        channelId: 'C001',
+        channelName: 'cn-project-old',
+        tmuxSession: 'claude-tmux-1',
+        project: 'myproject',
+        cwd: '/tmp/myproject',
+        active: true,
+        pendingMessageTs: '1234.5678',
+        createdAt: new Date().toISOString(),
+      },
+    };
+    fs.writeFileSync(manager.channelMapPath, JSON.stringify(data));
+
+    const result = manager.reuseChannelForTmuxSession('new-sess', 'claude-tmux-1');
+    assert.ok(result);
+    assert.equal(result.channelId, 'C001');
+    assert.equal(result.tmuxSession, 'claude-tmux-1');
+    assert.equal(result.pendingMessageTs, null);
+
+    // Old session should be deactivated
+    const map = JSON.parse(fs.readFileSync(manager.channelMapPath, 'utf8'));
+    assert.equal(map['old-sess'].active, false);
+    assert.equal(map['new-sess'].active, true);
+    assert.equal(map['new-sess'].channelId, 'C001');
+  });
+
+  it('returns null when no active channel exists for tmux session', () => {
+    fs.writeFileSync(manager.channelMapPath, '{}');
+    const result = manager.reuseChannelForTmuxSession('new-sess', 'claude-tmux-1');
+    assert.equal(result, null);
+  });
+
+  it('returns null when tmux session is null', () => {
+    fs.writeFileSync(manager.channelMapPath, '{}');
+    const result = manager.reuseChannelForTmuxSession('new-sess', null);
+    assert.equal(result, null);
+  });
+
+  it('returns existing mapping if new session already has one', () => {
+    const data = {
+      'new-sess': {
+        channelId: 'C002',
+        tmuxSession: 'claude-tmux-1',
+        active: true,
+        createdAt: new Date().toISOString(),
+      },
+    };
+    fs.writeFileSync(manager.channelMapPath, JSON.stringify(data));
+
+    const result = manager.reuseChannelForTmuxSession('new-sess', 'claude-tmux-1');
+    assert.equal(result.channelId, 'C002');
+  });
+
+  it('does not match inactive channels', () => {
+    const data = {
+      'old-sess': {
+        channelId: 'C001',
+        tmuxSession: 'claude-tmux-1',
+        active: false,
+        createdAt: new Date().toISOString(),
+      },
+    };
+    fs.writeFileSync(manager.channelMapPath, JSON.stringify(data));
+
+    const result = manager.reuseChannelForTmuxSession('new-sess', 'claude-tmux-1');
+    assert.equal(result, null);
+  });
+
+  it('does not match channels on different tmux sessions', () => {
+    const data = {
+      'old-sess': {
+        channelId: 'C001',
+        tmuxSession: 'claude-tmux-2',
+        active: true,
+        createdAt: new Date().toISOString(),
+      },
+    };
+    fs.writeFileSync(manager.channelMapPath, JSON.stringify(data));
+
+    const result = manager.reuseChannelForTmuxSession('new-sess', 'claude-tmux-1');
+    assert.equal(result, null);
+  });
+
+  it('clears progressMessageTs on remap', () => {
+    const data = {
+      'old-sess': {
+        channelId: 'C001',
+        tmuxSession: 'claude-tmux-1',
+        active: true,
+        progressMessageTs: '9999.1234',
+        createdAt: new Date().toISOString(),
+      },
+    };
+    fs.writeFileSync(manager.channelMapPath, JSON.stringify(data));
+
+    const result = manager.reuseChannelForTmuxSession('new-sess', 'claude-tmux-1');
+    assert.equal(result.progressMessageTs, undefined);
+  });
+});

@@ -145,6 +145,42 @@ class SlackChannelManager {
         return null;
     }
 
+    /**
+     * Reuse an existing channel for a new session on the same tmux session.
+     * Remaps the channel from the old session to the new one and posts a divider.
+     *
+     * @param {string} newSessionId - The new Claude session ID
+     * @param {string} tmuxSession - The tmux session name to match
+     * @returns {object|null} The remapped channel entry, or null if no reusable channel exists
+     */
+    reuseChannelForTmuxSession(newSessionId, tmuxSession) {
+        if (!tmuxSession) return null;
+
+        const map = this._readChannelMap();
+
+        // Already have a mapping for this session
+        if (map[newSessionId]?.active) return map[newSessionId];
+
+        // Find an active channel on the same tmux session
+        let oldSessionId = null;
+        let oldEntry = null;
+        for (const [sid, entry] of Object.entries(map)) {
+            if (entry.tmuxSession === tmuxSession && entry.active) {
+                oldSessionId = sid;
+                oldEntry = entry;
+                break;
+            }
+        }
+        if (!oldEntry) return null;
+
+        // Remap: create new entry, deactivate old
+        map[newSessionId] = { ...oldEntry, pendingMessageTs: null, progressMessageTs: undefined };
+        map[oldSessionId].active = false;
+        this._writeChannelMap(map);
+
+        return map[newSessionId];
+    }
+
     async getOrCreateChannel(sessionId, project, cwd, tmuxSession) {
         const existing = this.getChannelMapping(sessionId);
         if (existing) {
