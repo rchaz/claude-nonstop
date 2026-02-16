@@ -1,6 +1,6 @@
 # Repository Guidelines
 
-- Repo: https://github.com/anthropics/claude-nonstop
+- Repo: https://github.com/rchaz/claude-nonstop
 - Architecture: [DESIGN.md](DESIGN.md)
 
 ## Project Overview
