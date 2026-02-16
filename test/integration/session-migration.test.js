@@ -23,7 +23,7 @@ describe('session migration integration', () => {
 
   it('create → find → migrate → verify full cycle', () => {
     const cwd = '/Users/test/code/myproject';
-    const sessionId = 'test-session-001';
+    const sessionId = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
     const hash = getCwdHash(cwd);
 
     // Create source account with session
@@ -61,7 +61,7 @@ describe('session migration integration', () => {
   it('find across multiple profiles picks newest', () => {
     const cwd = '/Users/test/project';
     const hash = getCwdHash(cwd);
-    const sessionId = 'shared-session';
+    const sessionId = 'b2c3d4e5-f6a7-8901-bcde-f12345678901';
 
     // Account 1: old session
     const acct1Dir = join(tempDir, 'acct1');
@@ -95,14 +95,15 @@ describe('session migration integration', () => {
     const fromDir = join(tempDir, 'from');
     const projectDir = join(fromDir, 'projects', hash);
     mkdirSync(projectDir, { recursive: true });
-    writeFileSync(join(projectDir, 'simple-session.jsonl'), 'data\n');
+    const sessionId = 'c3d4e5f6-a7b8-9012-cdef-123456789012';
+    writeFileSync(join(projectDir, `${sessionId}.jsonl`), 'data\n');
     // No tool-results directory
 
     const toDir = join(tempDir, 'to');
-    const result = migrateSession(fromDir, toDir, cwd, 'simple-session');
+    const result = migrateSession(fromDir, toDir, cwd, sessionId);
     assert.equal(result.success, true);
 
     // Session file copied, no tool-results dir in destination
-    assert.ok(existsSync(join(toDir, 'projects', hash, 'simple-session.jsonl')));
+    assert.ok(existsSync(join(toDir, 'projects', hash, `${sessionId}.jsonl`)));
   });
 });
