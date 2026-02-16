@@ -1,0 +1,53 @@
+{
+  "name": "claude-nonstop",
+  "version": "0.2.0",
+  "description": "Automatic Claude Code account switching on rate limits + Slack remote access",
+  "type": "module",
+  "bin": {
+    "claude-nonstop": "./bin/claude-nonstop.js"
+  },
+  "scripts": {
+    "check": "node --check lib/*.js && node --check remote/*.cjs && node --check bin/claude-nonstop.js && node --check scripts/postinstall.js",
+    "test": "node --test 'test/unit/**/*.test.js' 'test/unit/**/*.test.cjs'",
+    "test:integration": "node --test 'test/integration/**/*.test.js'",
+    "test:security": "node --test 'test/security/**/*.test.js'",
+    "test:all": "node --test 'test/**/*.test.js' 'test/**/*.test.cjs'",
+    "webhook": "node remote/start-webhook.cjs",
+    "postinstall": "node scripts/postinstall.js"
+  },
+  "files": [
+    "assets/",
+    "bin/",
+    "lib/",
+    "remote/",
+    "scripts/"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "author": "Rahul Chandrasekaran",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/anthropics/claude-nonstop.git"
+  },
+  "bugs": {
+    "url": "https://github.com/anthropics/claude-nonstop/issues"
+  },
+  "homepage": "https://github.com/anthropics/claude-nonstop#readme",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "rate-limit",
+    "account-switching",
+    "multi-account",
+    "slack",
+    "remote-access",
+    "tmux"
+  ],
+  "dependencies": {
+    "@slack/bolt": "^4.3.0",
+    "@slack/web-api": "^7.9.1",
+    "node-pty": "^1.2.0-beta.11"
+  }
+}

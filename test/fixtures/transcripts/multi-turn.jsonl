@@ -1,0 +1,6 @@
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Read the config file"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"tool_1","name":"Read","input":{"file_path":"/tmp/config.json"}},{"type":"text","text":"Let me read the config file for you."}]}}
+{"type":"tool_result","tool_use_id":"tool_1","content":"{ \"key\": \"value\" }"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"The config file contains a single key-value pair: `key` is set to `value`."}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Now edit it"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"tool_2","name":"Edit","input":{"file_path":"/tmp/config.json","old_string":"value","new_string":"new_value"}},{"type":"text","text":"I'll update the value in the config file."}]}}

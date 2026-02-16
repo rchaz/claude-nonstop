@@ -1,0 +1,29 @@
+node_modules/
+.DS_Store
+*.log
+
+# Environment files (secrets)
+.env
+.env.*
+!.env.example
+
+# Data files (live in ~/.claude-nonstop/)
+remote/data/
+*.tmp
+
+# OS-specific
+Thumbs.db
+.Spotlight-V100
+.Trashes
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Build artifacts (node-pty native compilation)
+build/
+prebuilds/
+*.tgz

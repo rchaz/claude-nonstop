@@ -1,0 +1,2 @@
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Hello, please help me with a task"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I'd be happy to help! What task would you like me to assist with?"}]}}

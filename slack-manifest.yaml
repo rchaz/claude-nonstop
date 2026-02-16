@@ -1,0 +1,32 @@
+display_information:
+  name: Claude NonStop
+  description: Remote access bridge for Claude Code sessions
+  background_color: "#4a154b"
+features:
+  bot_user:
+    display_name: Claude NonStop
+    always_online: true
+oauth_config:
+  scopes:
+    bot:
+      - chat:write
+      - channels:manage
+      - channels:history
+      - channels:read
+      - reactions:read
+      - reactions:write
+      - app_mentions:read
+      - im:history
+      - im:read
+      - im:write
+settings:
+  event_subscriptions:
+    bot_events:
+      - message.channels
+      - message.im
+      - app_mention
+  interactivity:
+    is_enabled: false
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false
