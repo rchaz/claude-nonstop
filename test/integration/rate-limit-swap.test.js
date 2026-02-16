@@ -3,13 +3,15 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { createTempDir, removeTempDir } from '../helpers/temp-dir.js';
-import { extractResumeSessionId, buildResumeArgs, RATE_LIMIT_PATTERN, stripAnsi } from '../../lib/runner.js';
+import { extractResumeSessionId, buildResumeArgs, RATE_LIMIT_PATTERN, stripAnsi, findEarliestReset, EXHAUSTION_THRESHOLD } from '../../lib/runner.js';
 import { checkAllUsage } from '../../lib/usage.js';
-import { pickBestAccount } from '../../lib/scorer.js';
+import { pickBestAccount, effectiveUtilization } from '../../lib/scorer.js';
 import { findLatestSession, migrateSession, getCwdHash } from '../../lib/session.js';
 
 // Simulates the swap loop from runner.run() using pre-fabricated runOnce results.
 // Tests the orchestration logic without PTY/stdin/stdout dependencies.
+// Includes sleep-before-swap logic: when the best candidate is ≥99% utilized
+// and reset timestamps are available, records a sleep event instead of immediately swapping.
 function simulateSwapLoop({
   claudeArgs,
   currentAccount,
@@ -17,26 +19,28 @@ function simulateSwapLoop({
   cwd,
   maxSwaps = 5,
   runOnceResults, // Array of { exitCode, rateLimitDetected, resetTime, sessionId }
+  postSleepUsage, // Optional: replacement usage data after sleeping (simulates re-fetch)
 }) {
   let swapCount = 0;
   let sessionId = extractResumeSessionId(claudeArgs);
   const swapLog = [];
+  const sleepLog = [];
 
   for (const result of runOnceResults) {
     // Normal exit
     if (result.exitCode !== null && !result.rateLimitDetected) {
-      return { exitCode: result.exitCode, swapLog, finalAccount: currentAccount, finalArgs: claudeArgs };
+      return { exitCode: result.exitCode, swapLog, sleepLog, finalAccount: currentAccount, finalArgs: claudeArgs };
     }
 
     if (!result.rateLimitDetected) {
-      return { exitCode: result.exitCode ?? 1, swapLog, finalAccount: currentAccount, finalArgs: claudeArgs };
+      return { exitCode: result.exitCode ?? 1, swapLog, sleepLog, finalAccount: currentAccount, finalArgs: claudeArgs };
     }
 
     // Rate limit — attempt swap
     swapCount++;
 
     if (swapCount > maxSwaps) {
-      return { exitCode: 1, swapLog, error: 'max_swaps_reached', finalAccount: currentAccount, finalArgs: claudeArgs };
+      return { exitCode: 1, swapLog, sleepLog, error: 'max_swaps_reached', finalAccount: currentAccount, finalArgs: claudeArgs };
     }
 
     // Find session to migrate
@@ -45,10 +49,34 @@ function simulateSwapLoop({
       : findLatestSession(currentAccount.configDir, cwd);
 
     // Pick next best account
-    const best = pickBestAccount(allAccountsWithUsage, currentAccount.name);
+    let best = pickBestAccount(allAccountsWithUsage, currentAccount.name);
+
+    // Sleep-before-swap: if best candidate is near-exhausted, record a sleep event.
+    // Include all accounts (even current) when finding reset times.
+    if (best && effectiveUtilization(best.account.usage) >= EXHAUSTION_THRESHOLD) {
+      const sleepMs = findEarliestReset(allAccountsWithUsage);
+      if (sleepMs > 0) {
+        sleepLog.push({
+          sleepMs,
+          currentAccount: currentAccount.name,
+          bestAccountBefore: best.account.name,
+          bestUtilBefore: effectiveUtilization(best.account.usage),
+        });
+
+        // After sleep, use replacement usage data if provided.
+        // Don't exclude current account — it may have recovered during sleep.
+        if (postSleepUsage) {
+          allAccountsWithUsage = postSleepUsage;
+          best = pickBestAccount(allAccountsWithUsage);
+        }
+
+        // Sleep-then-swap doesn't count against the swap budget
+        swapCount--;
+      }
+    }
 
     if (!best) {
-      return { exitCode: 1, swapLog, error: 'no_alternative_accounts', finalAccount: currentAccount, finalArgs: claudeArgs };
+      return { exitCode: 1, swapLog, sleepLog, error: 'no_alternative_accounts', finalAccount: currentAccount, finalArgs: claudeArgs };
     }
 
     const nextAccount = best.account;
@@ -95,7 +123,7 @@ function simulateSwapLoop({
     );
   }
 
-  return { exitCode: 0, swapLog, finalAccount: currentAccount, finalArgs: claudeArgs };
+  return { exitCode: 0, swapLog, sleepLog, finalAccount: currentAccount, finalArgs: claudeArgs };
 }
 
 describe('rate limit swap loop', () => {
@@ -103,13 +131,19 @@ describe('rate limit swap loop', () => {
   const SESSION_ID = 'fade1234-5678-9abc-def0-123456789abc';
   const CWD = '/Users/test/code/myproject';
 
-  function makeAccount(name, sessionPercent, weeklyPercent) {
+  function makeAccount(name, sessionPercent, weeklyPercent, opts = {}) {
     const configDir = join(tempDir, `profile-${name}`);
     return {
       name,
       configDir,
       token: `sk-ant-oat01-${name}`,
-      usage: { sessionPercent, weeklyPercent, error: null },
+      usage: {
+        sessionPercent,
+        weeklyPercent,
+        sessionResetsAt: opts.sessionResetsAt ?? null,
+        weeklyResetsAt: opts.weeklyResetsAt ?? null,
+        error: null,
+      },
     };
   }
 
@@ -338,6 +372,330 @@ describe('rate limit swap loop', () => {
     assert.equal(result.swapLog[0].sessionMigrated, false);
     assert.equal(result.swapLog[0].sessionId, null);
     assert.equal(result.exitCode, 0);
+  });
+
+  // ── Sleep-before-swap tests ────────────────────────────────────────────
+
+  it('sleeps when all accounts are ≥99% utilized and reset times are available', () => {
+    const now = Date.now();
+    const resetTime = new Date(now + 3_600_000).toISOString(); // 1h from now
+
+    const acctA = makeAccount('primary', 100, 95);
+    const acctB = makeAccount('secondary', 99, 99, { sessionResetsAt: resetTime });
+
+    // After sleeping, secondary has dropped to 20%
+    const postSleepAccounts = [
+      acctA,
+      { ...acctB, usage: { sessionPercent: 20, weeklyPercent: 15, sessionResetsAt: null, weeklyResetsAt: null, error: null } },
+    ];
+
+    setupSessionFiles(acctA, SESSION_ID);
+
+    const result = simulateSwapLoop({
+      claudeArgs: ['-p', 'task'],
+      currentAccount: acctA,
+      allAccountsWithUsage: [acctA, acctB],
+      cwd: CWD,
+      postSleepUsage: postSleepAccounts,
+      runOnceResults: [
+        { exitCode: null, rateLimitDetected: true, resetTime: 'in 1h', sessionId: SESSION_ID },
+        { exitCode: 0, rateLimitDetected: false, resetTime: null, sessionId: SESSION_ID },
+      ],
+    });
+
+    // Sleep should have been triggered
+    assert.equal(result.sleepLog.length, 1);
+    assert.ok(result.sleepLog[0].sleepMs > 0);
+    assert.ok(result.sleepLog[0].sleepMs <= 3_600_000);
+    assert.equal(result.sleepLog[0].currentAccount, 'primary');
+    assert.equal(result.sleepLog[0].bestAccountBefore, 'secondary');
+    assert.ok(result.sleepLog[0].bestUtilBefore >= 99);
+
+    // Swap should still happen after sleep
+    assert.equal(result.swapLog.length, 1);
+    assert.equal(result.swapLog[0].to, 'secondary');
+    assert.equal(result.exitCode, 0);
+  });
+
+  it('does not sleep when best account is at 98% (below threshold)', () => {
+    const now = Date.now();
+    const acctA = makeAccount('primary', 100, 95);
+    const acctB = makeAccount('secondary', 98, 50, {
+      sessionResetsAt: new Date(now + 3_600_000).toISOString(),
+    });
+
+    setupSessionFiles(acctA, SESSION_ID);
+
+    const result = simulateSwapLoop({
+      claudeArgs: ['-p', 'task'],
+      currentAccount: acctA,
+      allAccountsWithUsage: [acctA, acctB],
+      cwd: CWD,
+      runOnceResults: [
+        { exitCode: null, rateLimitDetected: true, resetTime: 'in 1h', sessionId: SESSION_ID },
+        { exitCode: 0, rateLimitDetected: false, resetTime: null, sessionId: SESSION_ID },
+      ],
+    });
+
+    // No sleep should occur — 98% is below the 99% threshold
+    assert.equal(result.sleepLog.length, 0);
+    assert.equal(result.swapLog.length, 1);
+    assert.equal(result.swapLog[0].to, 'secondary');
+  });
+
+  it('does not sleep when best account is ≥99% but no reset timestamps exist', () => {
+    const acctA = makeAccount('primary', 100, 95);
+    const acctB = makeAccount('secondary', 99, 99); // no reset timestamps
+
+    setupSessionFiles(acctA, SESSION_ID);
+
+    const result = simulateSwapLoop({
+      claudeArgs: ['-p', 'task'],
+      currentAccount: acctA,
+      allAccountsWithUsage: [acctA, acctB],
+      cwd: CWD,
+      runOnceResults: [
+        { exitCode: null, rateLimitDetected: true, resetTime: 'in 1h', sessionId: SESSION_ID },
+        { exitCode: 0, rateLimitDetected: false, resetTime: null, sessionId: SESSION_ID },
+      ],
+    });
+
+    // No sleep — findEarliestReset returns 0 when no timestamps exist
+    assert.equal(result.sleepLog.length, 0);
+    // Should still swap (graceful fallback)
+    assert.equal(result.swapLog.length, 1);
+    assert.equal(result.swapLog[0].to, 'secondary');
+  });
+
+  it('sleep picks current account if it recovers after sleep', () => {
+    const now = Date.now();
+    const acctA = makeAccount('primary', 100, 100, {
+      sessionResetsAt: new Date(now + 1_800_000).toISOString(),
+    });
+    const acctB = makeAccount('secondary', 99, 99, {
+      sessionResetsAt: new Date(now + 3_600_000).toISOString(),
+    });
+
+    // After sleeping, primary has recovered (it's no longer excluded from the pick)
+    const postSleepAccounts = [
+      { ...acctA, usage: { sessionPercent: 5, weeklyPercent: 10, sessionResetsAt: null, weeklyResetsAt: null, error: null } },
+      { ...acctB, usage: { sessionPercent: 90, weeklyPercent: 85, sessionResetsAt: null, weeklyResetsAt: null, error: null } },
+    ];
+
+    setupSessionFiles(acctA, SESSION_ID);
+
+    const result = simulateSwapLoop({
+      claudeArgs: ['-p', 'task'],
+      currentAccount: acctA,
+      allAccountsWithUsage: [acctA, acctB],
+      cwd: CWD,
+      postSleepUsage: postSleepAccounts,
+      runOnceResults: [
+        { exitCode: null, rateLimitDetected: true, resetTime: 'in 30m', sessionId: SESSION_ID },
+        { exitCode: 0, rateLimitDetected: false, resetTime: null, sessionId: SESSION_ID },
+      ],
+    });
+
+    // Sleep was triggered
+    assert.equal(result.sleepLog.length, 1);
+    // After re-fetch, should pick 'primary' since it recovered and is now lowest utilization
+    assert.equal(result.swapLog.length, 1);
+    assert.equal(result.swapLog[0].to, 'primary');
+    assert.equal(result.exitCode, 0);
+  });
+
+  it('sleep uses current account reset time when it is the earliest', () => {
+    const now = Date.now();
+    // Current account resets in 30min — earlier than secondary's 2h
+    const acctA = makeAccount('primary', 100, 100, {
+      sessionResetsAt: new Date(now + 1_800_000).toISOString(),
+    });
+    const acctB = makeAccount('secondary', 99, 99, {
+      sessionResetsAt: new Date(now + 7_200_000).toISOString(),
+    });
+
+    const postSleepAccounts = [
+      { ...acctA, usage: { sessionPercent: 5, weeklyPercent: 10, sessionResetsAt: null, weeklyResetsAt: null, error: null } },
+      acctB,
+    ];
+
+    setupSessionFiles(acctA, SESSION_ID);
+
+    const result = simulateSwapLoop({
+      claudeArgs: ['-p', 'task'],
+      currentAccount: acctA,
+      allAccountsWithUsage: [acctA, acctB],
+      cwd: CWD,
+      postSleepUsage: postSleepAccounts,
+      runOnceResults: [
+        { exitCode: null, rateLimitDetected: true, resetTime: 'in 30m', sessionId: SESSION_ID },
+        { exitCode: 0, rateLimitDetected: false, resetTime: null, sessionId: SESSION_ID },
+      ],
+    });
+
+    // Should sleep using primary's reset time (~30min), not secondary's (~2h)
+    assert.equal(result.sleepLog.length, 1);
+    assert.ok(result.sleepLog[0].sleepMs <= 1_800_000, 'should use earliest reset (primary at 30m)');
+    assert.ok(result.sleepLog[0].sleepMs > 0);
+  });
+
+  it('sleep does not count against maxSwaps budget', () => {
+    const now = Date.now();
+    const acctA = makeAccount('a', 100, 100);
+    const acctB = makeAccount('b', 99, 99, {
+      sessionResetsAt: new Date(now + 1_800_000).toISOString(),
+    });
+
+    // After sleep, b recovers
+    const postSleepAccounts = [
+      acctA,
+      { ...acctB, usage: { sessionPercent: 20, weeklyPercent: 15, sessionResetsAt: null, weeklyResetsAt: null, error: null } },
+    ];
+
+    setupSessionFiles(acctA, SESSION_ID);
+
+    // maxSwaps=1: only 1 swap allowed. A sleep-swap should be free,
+    // leaving room for a real swap if needed.
+    const result = simulateSwapLoop({
+      claudeArgs: ['-p', 'task'],
+      currentAccount: acctA,
+      allAccountsWithUsage: [acctA, acctB],
+      cwd: CWD,
+      maxSwaps: 1,
+      postSleepUsage: postSleepAccounts,
+      runOnceResults: [
+        { exitCode: null, rateLimitDetected: true, resetTime: 'in 30m', sessionId: SESSION_ID },
+        { exitCode: 0, rateLimitDetected: false, resetTime: null, sessionId: SESSION_ID },
+      ],
+    });
+
+    // Sleep-swap should not exhaust the budget
+    assert.equal(result.sleepLog.length, 1);
+    assert.equal(result.swapLog.length, 1);
+    assert.notEqual(result.error, 'max_swaps_reached');
+    assert.equal(result.exitCode, 0);
+  });
+
+  it('sleep then retry succeeds with refreshed usage data', () => {
+    const now = Date.now();
+    const acctA = makeAccount('a', 100, 100);
+    const acctB = makeAccount('b', 99, 99, {
+      sessionResetsAt: new Date(now + 1_800_000).toISOString(),
+    });
+    const acctC = makeAccount('c', 99, 99, {
+      sessionResetsAt: new Date(now + 3_600_000).toISOString(),
+    });
+
+    // After sleeping, account c has dropped significantly
+    const postSleepAccounts = [
+      acctA,
+      { ...acctB, usage: { sessionPercent: 80, weeklyPercent: 70, sessionResetsAt: null, weeklyResetsAt: null, error: null } },
+      { ...acctC, usage: { sessionPercent: 10, weeklyPercent: 5, sessionResetsAt: null, weeklyResetsAt: null, error: null } },
+    ];
+
+    setupSessionFiles(acctA, SESSION_ID);
+
+    const result = simulateSwapLoop({
+      claudeArgs: ['-p', 'task'],
+      currentAccount: acctA,
+      allAccountsWithUsage: [acctA, acctB, acctC],
+      cwd: CWD,
+      postSleepUsage: postSleepAccounts,
+      runOnceResults: [
+        { exitCode: null, rateLimitDetected: true, resetTime: 'in 30m', sessionId: SESSION_ID },
+        { exitCode: 0, rateLimitDetected: false, resetTime: null, sessionId: SESSION_ID },
+      ],
+    });
+
+    // Sleep was triggered
+    assert.equal(result.sleepLog.length, 1);
+
+    // After re-fetch, should pick 'c' (lowest utilization after sleep)
+    assert.equal(result.swapLog.length, 1);
+    assert.equal(result.swapLog[0].to, 'c');
+    assert.equal(result.exitCode, 0);
+  });
+
+  it('sleep then all accounts still exhausted → falls through to error', () => {
+    const now = Date.now();
+    const acctA = makeAccount('a', 100, 100);
+    const acctB = makeAccount('b', 99, 99, {
+      sessionResetsAt: new Date(now + 1_800_000).toISOString(),
+    });
+
+    // After sleep, all accounts now have errors (e.g., tokens expired during sleep)
+    const postSleepAccounts = [
+      { ...acctA, usage: { error: 'HTTP 401' }, token: 'sk-ant-oat01-a', name: 'a', configDir: acctA.configDir },
+      { ...acctB, usage: { error: 'HTTP 401' }, token: 'sk-ant-oat01-b', name: 'b', configDir: acctB.configDir },
+    ];
+
+    setupSessionFiles(acctA, SESSION_ID);
+
+    const result = simulateSwapLoop({
+      claudeArgs: ['-p', 'task'],
+      currentAccount: acctA,
+      allAccountsWithUsage: [acctA, acctB],
+      cwd: CWD,
+      postSleepUsage: postSleepAccounts,
+      runOnceResults: [
+        { exitCode: null, rateLimitDetected: true, resetTime: 'in 30m', sessionId: SESSION_ID },
+      ],
+    });
+
+    // Sleep was triggered, but post-sleep pick returned null → error
+    assert.equal(result.sleepLog.length, 1);
+    assert.equal(result.error, 'no_alternative_accounts');
+    assert.equal(result.exitCode, 1);
+  });
+
+  it('single account at 99% with no alternatives → no sleep, no swap, error', () => {
+    const now = Date.now();
+    const acctA = makeAccount('solo', 99, 99, {
+      sessionResetsAt: new Date(now + 1_800_000).toISOString(),
+    });
+
+    setupSessionFiles(acctA, SESSION_ID);
+
+    const result = simulateSwapLoop({
+      claudeArgs: ['-p', 'task'],
+      currentAccount: acctA,
+      allAccountsWithUsage: [acctA],
+      cwd: CWD,
+      runOnceResults: [
+        { exitCode: null, rateLimitDetected: true, resetTime: 'in 30m', sessionId: SESSION_ID },
+      ],
+    });
+
+    // Only one account → pickBestAccount excludes it → returns null → no sleep path
+    assert.equal(result.sleepLog.length, 0);
+    assert.equal(result.error, 'no_alternative_accounts');
+    assert.equal(result.exitCode, 1);
+  });
+
+  it('no sleep when only weekly is at 99% but session is low', () => {
+    const now = Date.now();
+    const acctA = makeAccount('a', 100, 100);
+    const acctB = makeAccount('b', 30, 99, {
+      weeklyResetsAt: new Date(now + 86_400_000).toISOString(),
+    });
+
+    setupSessionFiles(acctA, SESSION_ID);
+
+    const result = simulateSwapLoop({
+      claudeArgs: ['-p', 'task'],
+      currentAccount: acctA,
+      allAccountsWithUsage: [acctA, acctB],
+      cwd: CWD,
+      runOnceResults: [
+        { exitCode: null, rateLimitDetected: true, resetTime: 'in 1h', sessionId: SESSION_ID },
+        { exitCode: 0, rateLimitDetected: false, resetTime: null, sessionId: SESSION_ID },
+      ],
+    });
+
+    // effectiveUtilization(b) = max(30, 99) = 99 → sleep IS triggered
+    // (this tests that weekly percent at 99 does trigger the threshold)
+    assert.equal(result.sleepLog.length, 1);
+    assert.equal(result.swapLog.length, 1);
   });
 
   it('skips accounts with errors during cascading swap', () => {

@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { RATE_LIMIT_PATTERN, stripAnsi } from '../../../lib/runner.js';
+import { RATE_LIMIT_PATTERN, stripAnsi, findEarliestReset, formatDuration, sleep, EXHAUSTION_THRESHOLD, MAX_SLEEP_MS } from '../../../lib/runner.js';
+import { effectiveUtilization } from '../../../lib/scorer.js';
 
 describe('RATE_LIMIT_PATTERN', () => {
   // ── Should match ─────────────────────────────────────────────────────
@@ -195,5 +196,224 @@ describe('rolling buffer + pattern detection simulation', () => {
     ]);
     assert.equal(result.rateLimitDetected, true);
     assert.equal(result.resetTime, 'in 1h');
+  });
+});
+
+describe('findEarliestReset', () => {
+  function makeAccount(name, sessionResetsAt, weeklyResetsAt) {
+    return {
+      name,
+      usage: {
+        sessionPercent: 99,
+        weeklyPercent: 99,
+        sessionResetsAt,
+        weeklyResetsAt,
+      },
+    };
+  }
+
+  it('picks the earliest reset time across multiple accounts', () => {
+    const now = Date.now();
+    const accounts = [
+      makeAccount('a', new Date(now + 3_600_000).toISOString(), new Date(now + 7_200_000).toISOString()),
+      makeAccount('b', new Date(now + 1_800_000).toISOString(), new Date(now + 5_400_000).toISOString()),
+    ];
+
+    const result = findEarliestReset(accounts);
+    // Should pick account b's sessionResetsAt (30min = 1_800_000ms)
+    assert.ok(result > 0);
+    assert.ok(result <= 1_800_000);
+    assert.ok(result >= 1_790_000); // allow small timing delta
+  });
+
+  it('excludes the named account', () => {
+    const now = Date.now();
+    const accounts = [
+      makeAccount('excluded', new Date(now + 600_000).toISOString(), null),   // earliest, but excluded
+      makeAccount('included', new Date(now + 3_600_000).toISOString(), null), // 1h
+    ];
+
+    const result = findEarliestReset(accounts, 'excluded');
+    assert.ok(result > 600_000, 'should not use excluded account reset time');
+    assert.ok(result <= 3_600_000);
+  });
+
+  it('returns 0 when all accounts are missing reset timestamps', () => {
+    const accounts = [
+      makeAccount('a', null, null),
+      makeAccount('b', null, null),
+    ];
+
+    const result = findEarliestReset(accounts);
+    assert.equal(result, 0);
+  });
+
+  it('returns 0 when reset times are in the past', () => {
+    const now = Date.now();
+    const accounts = [
+      makeAccount('a', new Date(now - 3_600_000).toISOString(), new Date(now - 1_800_000).toISOString()),
+    ];
+
+    const result = findEarliestReset(accounts);
+    assert.equal(result, 0);
+  });
+
+  it('handles mix of valid and invalid reset timestamps', () => {
+    const now = Date.now();
+    const accounts = [
+      makeAccount('a', 'not-a-date', null),
+      makeAccount('b', null, new Date(now + 7_200_000).toISOString()),
+    ];
+
+    const result = findEarliestReset(accounts);
+    assert.ok(result > 0);
+    assert.ok(result <= 7_200_000);
+  });
+
+  it('prefers session reset over weekly if session is earlier', () => {
+    const now = Date.now();
+    const accounts = [
+      makeAccount('a', new Date(now + 1_800_000).toISOString(), new Date(now + 86_400_000).toISOString()),
+    ];
+
+    const result = findEarliestReset(accounts);
+    assert.ok(result <= 1_800_000);
+  });
+
+  it('handles accounts with null usage', () => {
+    const now = Date.now();
+    const accounts = [
+      { name: 'null-usage', usage: null },
+      makeAccount('ok', new Date(now + 3_600_000).toISOString(), null),
+    ];
+
+    const result = findEarliestReset(accounts);
+    assert.ok(result > 0);
+    assert.ok(result <= 3_600_000);
+  });
+});
+
+describe('formatDuration', () => {
+  it('formats hours and minutes', () => {
+    assert.equal(formatDuration(2 * 3_600_000 + 15 * 60_000), '2h 15m');
+  });
+
+  it('formats minutes only when under 1 hour', () => {
+    assert.equal(formatDuration(45 * 60_000), '45m');
+  });
+
+  it('formats zero minutes', () => {
+    assert.equal(formatDuration(30_000), '0m');
+  });
+
+  it('formats exact hours', () => {
+    assert.equal(formatDuration(3 * 3_600_000), '3h 0m');
+  });
+});
+
+describe('sleep', () => {
+  it('resolves after the given duration with interrupted: false', async () => {
+    const start = Date.now();
+    const { interrupted } = await sleep(50);
+    const elapsed = Date.now() - start;
+    assert.equal(interrupted, false);
+    assert.ok(elapsed >= 40, `should have slept ~50ms, got ${elapsed}ms`);
+  });
+
+  it('resolves early with interrupted: true on SIGINT', async () => {
+    const start = Date.now();
+    // Schedule SIGINT after 30ms; sleep is 5 seconds
+    const timer = setTimeout(() => process.emit('SIGINT'), 30);
+    const { interrupted } = await sleep(5000);
+    clearTimeout(timer);
+    const elapsed = Date.now() - start;
+    assert.equal(interrupted, true);
+    assert.ok(elapsed < 1000, `should have been interrupted quickly, got ${elapsed}ms`);
+  });
+
+  it('resolves early with interrupted: true on SIGTERM', async () => {
+    const start = Date.now();
+    const timer = setTimeout(() => process.emit('SIGTERM'), 30);
+    const { interrupted } = await sleep(5000);
+    clearTimeout(timer);
+    const elapsed = Date.now() - start;
+    assert.equal(interrupted, true);
+    assert.ok(elapsed < 1000, `should have been interrupted quickly, got ${elapsed}ms`);
+  });
+
+  it('cleans up signal listeners after normal completion', async () => {
+    const before = process.listenerCount('SIGINT');
+    const beforeTerm = process.listenerCount('SIGTERM');
+    await sleep(10);
+    const after = process.listenerCount('SIGINT');
+    const afterTerm = process.listenerCount('SIGTERM');
+    assert.equal(after, before, 'should not leak SIGINT listeners');
+    assert.equal(afterTerm, beforeTerm, 'should not leak SIGTERM listeners');
+  });
+
+  it('cleans up signal listeners after interruption', async () => {
+    const before = process.listenerCount('SIGINT');
+    const beforeTerm = process.listenerCount('SIGTERM');
+    const timer = setTimeout(() => process.emit('SIGINT'), 10);
+    await sleep(5000);
+    clearTimeout(timer);
+    const after = process.listenerCount('SIGINT');
+    const afterTerm = process.listenerCount('SIGTERM');
+    assert.equal(after, before, 'should not leak SIGINT listeners after interrupt');
+    assert.equal(afterTerm, beforeTerm, 'should not leak SIGTERM listeners after interrupt');
+  });
+});
+
+describe('effectiveUtilization', () => {
+
+  it('returns max of session and weekly percent', () => {
+    assert.equal(effectiveUtilization({ sessionPercent: 30, weeklyPercent: 70 }), 70);
+    assert.equal(effectiveUtilization({ sessionPercent: 90, weeklyPercent: 50 }), 90);
+  });
+
+  it('returns 100 for null usage', () => {
+    assert.equal(effectiveUtilization(null), 100);
+  });
+
+  it('returns 100 for undefined usage', () => {
+    assert.equal(effectiveUtilization(undefined), 100);
+  });
+
+  it('handles zero values', () => {
+    assert.equal(effectiveUtilization({ sessionPercent: 0, weeklyPercent: 0 }), 0);
+  });
+
+  it('handles missing percent fields', () => {
+    assert.equal(effectiveUtilization({}), 0);
+    assert.equal(effectiveUtilization({ sessionPercent: 50 }), 50);
+    assert.equal(effectiveUtilization({ weeklyPercent: 80 }), 80);
+  });
+
+  it('returns exactly 99 at the threshold boundary', () => {
+    assert.equal(effectiveUtilization({ sessionPercent: 99, weeklyPercent: 50 }), 99);
+    assert.equal(effectiveUtilization({ sessionPercent: 50, weeklyPercent: 99 }), 99);
+  });
+});
+
+describe('EXHAUSTION_THRESHOLD and MAX_SLEEP_MS constants', () => {
+  it('EXHAUSTION_THRESHOLD is 99', () => {
+    assert.equal(EXHAUSTION_THRESHOLD, 99);
+  });
+
+  it('MAX_SLEEP_MS is 6 hours', () => {
+    assert.equal(MAX_SLEEP_MS, 6 * 60 * 60 * 1000);
+  });
+
+  it('MAX_SLEEP_MS clamp logic works correctly', () => {
+    // Simulate the clamping logic from runner.js
+    const clamp = (ms) => Math.min(ms, MAX_SLEEP_MS);
+
+    // Under the cap
+    assert.equal(clamp(3_600_000), 3_600_000); // 1h stays 1h
+    // At the cap
+    assert.equal(clamp(MAX_SLEEP_MS), MAX_SLEEP_MS); // 6h stays 6h
+    // Over the cap
+    assert.equal(clamp(12 * 60 * 60 * 1000), MAX_SLEEP_MS); // 12h clamped to 6h
+    assert.equal(clamp(24 * 60 * 60 * 1000), MAX_SLEEP_MS); // 24h clamped to 6h
   });
 });

@@ -6,10 +6,12 @@
  * Called by Claude Code hooks (Stop, SessionStart, PostToolUse) and runner.js (account-switch).
  *
  * Notification types:
- *   session-start   — Create per-session Slack channel (Claude Code hook)
- *   completed       — Post structured completion message (Claude Code hook)
- *   tool-use        — Buffer tool activity, flush to Slack every 10s (Claude Code PostToolUse hook)
- *   account-switch  — Notify about rate limit account switch (runner.js)
+ *   session-start    — Create per-session Slack channel (Claude Code hook)
+ *   completed        — Post structured completion message (Claude Code hook)
+ *   tool-use         — Buffer tool activity, flush to Slack every 10s (Claude Code PostToolUse hook)
+ *   account-switch   — Notify about rate limit account switch (runner.js)
+ *   sleep-until-reset — Notify that all accounts are near-exhausted, sleeping until reset (runner.js)
+ *   sleep-wake        — Notify that sleep is complete and resuming (runner.js)
  *
  * Environment:
  *   CLAUDE_REMOTE_ACCESS=true  — enables per-session Slack channels
@@ -326,6 +328,39 @@ async function main() {
             buf.lastFlushTs = now;
             writeProgressBuffer(bufPath, buf);
         }
+        return;
+    }
+
+    // Handle sleep-until-reset notifications (spawned by runner.js)
+    if (notificationType === 'sleep-until-reset') {
+        if (!isPerSessionMode()) return;
+
+        const manager = createChannelManager();
+        const resolvedId = sessionId || manager.getSessionByCwd(currentDir)?.sessionId;
+        if (!resolvedId) return;
+
+        const { current_account, sleep_ms, reset_at } = hookContext || {};
+        const hours = Math.floor((sleep_ms || 0) / (1000 * 60 * 60));
+        const minutes = Math.floor(((sleep_ms || 0) % (1000 * 60 * 60)) / (1000 * 60));
+        const duration = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+        const text = `:zzz: All accounts near rate limit. Sleeping for ${duration} (until reset).\nCurrent account: "${current_account}"`;
+        await manager.postToSessionChannel(resolvedId, text);
+        return;
+    }
+
+    // Handle sleep-wake notifications (spawned by runner.js)
+    if (notificationType === 'sleep-wake') {
+        if (!isPerSessionMode()) return;
+
+        const manager = createChannelManager();
+        const resolvedId = sessionId || manager.getSessionByCwd(currentDir)?.sessionId;
+        if (!resolvedId) return;
+
+        const { best_account } = hookContext || {};
+        const text = best_account
+            ? `:sunrise: Woke up! Switching to "${best_account}".`
+            : ':sunrise: Woke up! Re-checking accounts...';
+        await manager.postToSessionChannel(resolvedId, text);
         return;
     }
 
