@@ -6,35 +6,35 @@ Multi-account switching + Slack remote access for Claude Code.
 
 **Slack remote access:** Each Claude Code session gets a dedicated Slack channel. Send messages in the channel to control Claude remotely. Claude's responses are posted back to the channel.
 
-## Prerequisites
-
-**Required for all features:**
-
-- **Node.js 18+** — [Download](https://nodejs.org/)
-- **C/C++ build tools** — Required to compile the `node-pty` native dependency.
-  - macOS: `xcode-select --install` (Xcode Command Line Tools)
-  - Linux (Debian/Ubuntu): `sudo apt install build-essential python3`
-  - Linux (Fedora): `sudo dnf groupinstall "Development Tools"`
-- **Claude Code CLI** — [Install guide](https://docs.anthropic.com/en/docs/claude-code/overview). Verify with: `claude --version`
-
-**For multi-account switching** (auto-switching between accounts):
-
-- **2+ Claude accounts** — Each needs its own subscription (Pro, Max, or Team).
-
-**For Slack remote access** (`--remote-access`):
-
-- **tmux** — macOS: `brew install tmux`. Linux: `apt install tmux`
-- **Slack workspace** — You'll create a Slack app with Socket Mode. A [manifest file](#1-create-a-slack-app) is provided for quick setup.
+> **Platform:** Tested on macOS only. Linux may work but is untested.
 
 ## Install
 
+The easiest way to install is to ask Claude Code:
+
+```
+You: set up claude-nonstop for me
+```
+
+Claude Code will follow the [setup instructions in CLAUDE.md](CLAUDE.md#setting-up-claude-nonstop-for-a-user) to install, configure accounts, and set up Slack remote access interactively.
+
+### Manual install
+
+**Prerequisites:**
+
+- **Node.js 18+** — [Download](https://nodejs.org/)
+- **C/C++ build tools** — macOS: `xcode-select --install`
+- **Claude Code CLI** — [Install guide](https://docs.anthropic.com/en/docs/claude-code/overview). Verify with: `claude --version`
+- **2+ Claude accounts** for multi-account switching (each needs its own subscription)
+- **tmux** for Slack remote access: `brew install tmux`
+
 ```bash
-git clone https://github.com/anthropics/claude-nonstop.git
+git clone https://github.com/rchaz/claude-nonstop.git
 cd claude-nonstop
 npm install -g "$(npm pack)"
 ```
 
-If `npm install -g` fails with compilation errors, you're missing C/C++ build tools — see [Prerequisites](#prerequisites).
+If `npm install -g` fails with compilation errors, you're missing C/C++ build tools.
 
 Verify:
 
@@ -238,31 +238,7 @@ If you need to manually install the service (e.g., after reinstalling):
 claude-nonstop webhook install
 ```
 
-**On Linux**, `setup` does not install a service. Run the webhook in a persistent session:
-
-```bash
-# Option 1: Run in a tmux/screen session
-tmux new-session -d -s webhook 'claude-nonstop webhook start'
-
-# Option 2: Create a systemd user service
-mkdir -p ~/.config/systemd/user
-cat > ~/.config/systemd/user/claude-nonstop-slack.service << 'EOF'
-[Unit]
-Description=claude-nonstop Slack webhook
-After=network.target
-
-[Service]
-ExecStart=/usr/bin/env node /path/to/claude-nonstop/remote/start-webhook.cjs
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=default.target
-EOF
-systemctl --user enable --now claude-nonstop-slack
-```
-
-For debugging, you can also run the webhook in the foreground on macOS:
+For debugging, you can run the webhook in the foreground:
 
 ```bash
 claude-nonstop webhook start   # Runs in foreground (Ctrl+C to stop)
@@ -416,11 +392,11 @@ claude-nonstop/
 
 ### `npm install` fails with compilation errors
 
-The `node-pty` package requires a C/C++ compiler. Install the build tools for your platform:
+The `node-pty` package requires a C/C++ compiler:
 
-- macOS: `xcode-select --install`
-- Debian/Ubuntu: `sudo apt install build-essential python3`
-- Fedora: `sudo dnf groupinstall "Development Tools"`
+```bash
+xcode-select --install
+```
 
 Then re-run `npm install`.
 
@@ -478,9 +454,9 @@ See [CLAUDE.md](CLAUDE.md#setting-up-claude-nonstop-for-a-user) for step-by-step
 
 | Platform | Credential Store | Service Management | Status |
 |----------|-----------------|-------------------|--------|
-| macOS | Keychain (`security`) | launchd | Supported |
-| Linux | Secret Service (`secret-tool`) | Manual (systemd example in docs) | Supported |
-| Windows | — | — | Not yet |
+| macOS | Keychain (`security`) | launchd | Tested |
+| Linux | Secret Service (`secret-tool`) | Manual (systemd example in docs) | Untested |
+| Windows | — | — | Not supported |
 
 ## License
 
