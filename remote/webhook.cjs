@@ -103,7 +103,21 @@ class SlackWebhook {
                 }
 
                 if (text === '!help') {
-                    await say(':information_source: *Available commands:*\n\u2022 `!stop` \u2014 interrupt Claude (Ctrl+C)\n\u2022 `!status` \u2014 show current terminal output\n\u2022 `!archive` \u2014 archive this channel\n\u2022 `!help` \u2014 show this help');
+                    await say(':information_source: *Available commands:*\n\u2022 `!stop` \u2014 interrupt Claude (Ctrl+C)\n\u2022 `!status` \u2014 show current terminal output\n\u2022 `!cmd <text>` \u2014 relay text verbatim (e.g. `!cmd /clear`)\n\u2022 `!archive` \u2014 archive this channel\n\u2022 `!help` \u2014 show this help');
+                    return;
+                }
+
+                if (text.startsWith('!cmd ')) {
+                    const cmdText = text.slice(5);
+                    if (!cmdText) return;
+                    if (sessionInfo.tmuxSession) {
+                        const relayOk = this._executeTmuxCommand(cmdText, { tmuxSession: sessionInfo.tmuxSession });
+                        if (!relayOk) {
+                            await say(':warning: Failed to relay message \u2014 tmux session may have ended');
+                        }
+                    } else {
+                        await say('No tmux session associated with this channel.');
+                    }
                     return;
                 }
 

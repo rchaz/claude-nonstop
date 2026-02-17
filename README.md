@@ -330,6 +330,7 @@ The Slack webhook runs as a separate process. It connects via Socket Mode and li
 |---------|--------|
 | `!stop` | Interrupt Claude (Ctrl+C) |
 | `!status` | Show current terminal output |
+| `!cmd <text>` | Relay text verbatim (e.g. `!cmd /clear`) |
 | `!help` | List available commands |
 | `!archive` | Archive the channel |
 

@@ -135,6 +135,7 @@ In per-session Slack channels, these commands are handled before tmux relay:
 |---------|--------|
 | `!stop` | Send Ctrl+C to tmux session |
 | `!status` | Capture and post terminal pane content |
+| `!cmd <text>` | Relay text verbatim (e.g. `!cmd /clear`) |
 | `!help` | Show available commands |
 | `!archive` | Archive the Slack channel |
 
