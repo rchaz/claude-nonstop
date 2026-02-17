@@ -141,6 +141,33 @@ function parseCurrentTurn(transcriptPath) {
     return result;
 }
 
+// ─── Transcript Path Resolution ────────────────────────────────────────────
+
+/**
+ * Derive the transcript .jsonl path from CLAUDE_CONFIG_DIR, session ID, and CWD.
+ * Claude Code stores sessions at: <configDir>/projects/<cwdHash>/<sessionId>.jsonl
+ * where cwdHash is the absolute CWD with '/' replaced by '-'.
+ *
+ * @param {string} sessionId
+ * @param {string} cwd
+ * @returns {string|null} Path to the transcript file, or null if not found
+ */
+function findTranscriptPath(sessionId, cwd) {
+    const configDir = process.env.CLAUDE_CONFIG_DIR;
+    if (!configDir || !sessionId || !cwd) return null;
+
+    const expandedConfigDir = configDir.startsWith('~')
+        ? configDir.replace(/^~/, require('os').homedir())
+        : configDir;
+    const cwdHash = cwd.replace(/\//g, '-');
+    const transcriptPath = path.join(expandedConfigDir, 'projects', cwdHash, `${sessionId}.jsonl`);
+
+    try {
+        if (fs.existsSync(transcriptPath)) return transcriptPath;
+    } catch { /* fall through */ }
+    return null;
+}
+
 // ─── tmux Detection ─────────────────────────────────────────────────────────
 
 function detectTmuxSession() {
@@ -248,10 +275,19 @@ function formatProgressMessage(events) {
  * Format a notification for tools that pause Claude to wait for user input.
  * @param {string} toolName
  * @param {object} toolInput
+ * @param {string|null} [transcriptContent] - Last assistant message from transcript (used for plan content)
  * @returns {string}
  */
-function formatWaitingMessage(toolName, toolInput) {
+function formatWaitingMessage(toolName, toolInput, transcriptContent) {
     if (toolName === 'ExitPlanMode') {
+        if (transcriptContent) {
+            const mrkdwn = markdownToMrkdwn(transcriptContent);
+            const MAX_PLAN_LENGTH = 39000;
+            const truncated = mrkdwn.length > MAX_PLAN_LENGTH
+                ? mrkdwn.substring(0, MAX_PLAN_LENGTH) + '...'
+                : mrkdwn;
+            return `:clipboard: *Plan ready \u2014 waiting for approval*\n\n${truncated}`;
+        }
         return ':clipboard: Plan ready \u2014 waiting for approval in terminal. Use `!status` to view.';
     }
     if (toolName === 'AskUserQuestion') {
@@ -307,7 +343,18 @@ async function main() {
         if (WAITING_FOR_INPUT_TOOLS.has(toolName)) {
             const manager = createChannelManager();
             await manager.clearProgressMessage(sessionId);
-            const text = formatWaitingMessage(toolName, toolInput);
+
+            // For ExitPlanMode, read the plan content from the transcript
+            let transcriptContent = null;
+            if (toolName === 'ExitPlanMode') {
+                const transcriptPath = hookContext?.transcript_path
+                    || findTranscriptPath(sessionId, currentDir);
+                if (transcriptPath) {
+                    transcriptContent = getLastAssistantMessage(transcriptPath);
+                }
+            }
+
+            const text = formatWaitingMessage(toolName, toolInput, transcriptContent);
             await manager.postToSessionChannel(sessionId, text);
             return;
         }
@@ -440,7 +487,7 @@ if (require.main === module) {
 
 module.exports = {
     getLastAssistantMessage, parseCurrentTurn, isPerSessionMode, readStdin, markdownToMrkdwn,
-    extractToolDetail, formatProgressMessage, formatWaitingMessage,
+    extractToolDetail, formatProgressMessage, formatWaitingMessage, findTranscriptPath,
     // Buffer helpers exported for testing
     readProgressBuffer, writeProgressBuffer, appendToProgressBuffer, progressBufferPath,
     FLUSH_INTERVAL_MS, WAITING_FOR_INPUT_TOOLS,

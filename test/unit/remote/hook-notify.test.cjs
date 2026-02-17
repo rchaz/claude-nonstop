@@ -6,7 +6,7 @@ const { createTempDir, removeTempDir } = require('../../helpers/temp-dir.cjs');
 
 const {
   getLastAssistantMessage, parseCurrentTurn, isPerSessionMode, markdownToMrkdwn,
-  extractToolDetail, formatProgressMessage, formatWaitingMessage,
+  extractToolDetail, formatProgressMessage, formatWaitingMessage, findTranscriptPath,
   readProgressBuffer, writeProgressBuffer, appendToProgressBuffer, progressBufferPath,
   FLUSH_INTERVAL_MS, WAITING_FOR_INPUT_TOOLS,
 } = require('../../../remote/hook-notify.cjs');
@@ -497,11 +497,52 @@ describe('WAITING_FOR_INPUT_TOOLS', () => {
 });
 
 describe('formatWaitingMessage', () => {
-  it('returns plan approval message for ExitPlanMode', () => {
+  it('returns generic plan message for ExitPlanMode without transcript content', () => {
     const msg = formatWaitingMessage('ExitPlanMode', {});
     assert.ok(msg.includes(':clipboard:'));
     assert.ok(msg.includes('Plan ready'));
     assert.ok(msg.includes('!status'));
+  });
+
+  it('returns generic plan message when transcriptContent is null', () => {
+    const msg = formatWaitingMessage('ExitPlanMode', {}, null);
+    assert.ok(msg.includes('Plan ready'));
+    assert.ok(msg.includes('!status'));
+  });
+
+  it('includes plan content when transcriptContent is provided', () => {
+    const plan = '## Plan\n\n1. **Add Redis** - Create cache layer\n2. **Update routes** - Add middleware';
+    const msg = formatWaitingMessage('ExitPlanMode', {}, plan);
+    assert.ok(msg.includes(':clipboard:'));
+    assert.ok(msg.includes('*Plan ready'));
+    assert.ok(msg.includes('waiting for approval'));
+    assert.ok(msg.includes('Add Redis'));
+    assert.ok(msg.includes('Update routes'));
+    // Should not include the !status fallback when content is present
+    assert.ok(!msg.includes('!status'));
+  });
+
+  it('converts markdown to Slack mrkdwn in plan content', () => {
+    const plan = '**Bold text** and [a link](https://example.com)';
+    const msg = formatWaitingMessage('ExitPlanMode', {}, plan);
+    // **bold** becomes *bold* in mrkdwn
+    assert.ok(msg.includes('*Bold text*'));
+    // [text](url) becomes <url|text> in mrkdwn
+    assert.ok(msg.includes('<https://example.com|a link>'));
+  });
+
+  it('truncates very long plan content to 39000 chars', () => {
+    const longPlan = 'x'.repeat(40000);
+    const msg = formatWaitingMessage('ExitPlanMode', {}, longPlan);
+    assert.ok(msg.length < 40000);
+    assert.ok(msg.endsWith('...'));
+  });
+
+  it('does not truncate plan content under 39000 chars', () => {
+    const plan = 'Short plan content';
+    const msg = formatWaitingMessage('ExitPlanMode', {}, plan);
+    assert.ok(!msg.endsWith('...'));
+    assert.ok(msg.includes('Short plan content'));
   });
 
   it('ignores toolInput for ExitPlanMode', () => {
@@ -561,5 +602,116 @@ describe('formatWaitingMessage', () => {
     const msg = formatWaitingMessage('SomeUnknownTool', {});
     assert.ok(msg.includes(':hourglass:'));
     assert.ok(msg.includes('Waiting for input'));
+  });
+
+  it('ignores transcriptContent for non-ExitPlanMode tools', () => {
+    const msg = formatWaitingMessage('AskUserQuestion', null, 'some plan text');
+    assert.ok(msg.includes('asking a question'));
+    assert.ok(!msg.includes('some plan text'));
+  });
+});
+
+describe('findTranscriptPath', () => {
+  let tempDir;
+  let origConfigDir;
+
+  beforeEach(() => {
+    tempDir = createTempDir();
+    origConfigDir = process.env.CLAUDE_CONFIG_DIR;
+  });
+
+  afterEach(() => {
+    removeTempDir(tempDir);
+    if (origConfigDir !== undefined) process.env.CLAUDE_CONFIG_DIR = origConfigDir;
+    else delete process.env.CLAUDE_CONFIG_DIR;
+  });
+
+  it('returns path when transcript file exists', () => {
+    process.env.CLAUDE_CONFIG_DIR = tempDir;
+    const cwd = '/Users/test/myproject';
+    const sessionId = 'abc-123-def';
+    const cwdHash = cwd.replace(/\//g, '-');
+    const projectDir = path.join(tempDir, 'projects', cwdHash);
+    fs.mkdirSync(projectDir, { recursive: true });
+    fs.writeFileSync(path.join(projectDir, `${sessionId}.jsonl`), '{}');
+
+    const result = findTranscriptPath(sessionId, cwd);
+    assert.ok(result);
+    assert.ok(result.endsWith(`${sessionId}.jsonl`));
+    assert.ok(result.includes('projects'));
+  });
+
+  it('returns null when transcript file does not exist', () => {
+    process.env.CLAUDE_CONFIG_DIR = tempDir;
+    const result = findTranscriptPath('nonexistent-session', '/some/path');
+    assert.equal(result, null);
+  });
+
+  it('returns null when CLAUDE_CONFIG_DIR is not set', () => {
+    delete process.env.CLAUDE_CONFIG_DIR;
+    const result = findTranscriptPath('abc-123', '/some/path');
+    assert.equal(result, null);
+  });
+
+  it('returns null when sessionId is null', () => {
+    process.env.CLAUDE_CONFIG_DIR = tempDir;
+    const result = findTranscriptPath(null, '/some/path');
+    assert.equal(result, null);
+  });
+
+  it('returns null when cwd is null', () => {
+    process.env.CLAUDE_CONFIG_DIR = tempDir;
+    const result = findTranscriptPath('abc-123', null);
+    assert.equal(result, null);
+  });
+
+  it('computes correct cwdHash from cwd', () => {
+    process.env.CLAUDE_CONFIG_DIR = tempDir;
+    const cwd = '/Users/rc/code/claude-nonstop';
+    const sessionId = 'test-session';
+    const expectedHash = '-Users-rc-code-claude-nonstop';
+    const projectDir = path.join(tempDir, 'projects', expectedHash);
+    fs.mkdirSync(projectDir, { recursive: true });
+    fs.writeFileSync(path.join(projectDir, `${sessionId}.jsonl`), '{}');
+
+    const result = findTranscriptPath(sessionId, cwd);
+    assert.ok(result);
+    assert.ok(result.includes(expectedHash));
+  });
+});
+
+describe('plan mode transcript integration', () => {
+  it('getLastAssistantMessage extracts plan text from plan-mode transcript', () => {
+    const transcriptPath = path.join(FIXTURES_DIR, 'plan-mode.jsonl');
+    const result = getLastAssistantMessage(transcriptPath);
+    assert.ok(result, 'should find plan text in transcript');
+    assert.ok(result.includes('Implementation Plan'));
+    assert.ok(result.includes('Add Redis client'));
+    assert.ok(result.includes('cache middleware'));
+  });
+
+  it('parseCurrentTurn finds ExitPlanMode tool use in plan-mode transcript', () => {
+    const transcriptPath = path.join(FIXTURES_DIR, 'plan-mode.jsonl');
+    const result = parseCurrentTurn(transcriptPath);
+    const exitPlan = result.toolUses.find(t => t.tool === 'ExitPlanMode');
+    assert.ok(exitPlan, 'should find ExitPlanMode tool use');
+  });
+
+  it('parseCurrentTurn extracts plan summary from plan-mode transcript', () => {
+    const transcriptPath = path.join(FIXTURES_DIR, 'plan-mode.jsonl');
+    const result = parseCurrentTurn(transcriptPath);
+    assert.ok(result.summary);
+    assert.ok(result.summary.includes('plan'));
+  });
+
+  it('formatWaitingMessage with real transcript content produces complete plan message', () => {
+    const transcriptPath = path.join(FIXTURES_DIR, 'plan-mode.jsonl');
+    const planContent = getLastAssistantMessage(transcriptPath);
+    const msg = formatWaitingMessage('ExitPlanMode', {}, planContent);
+    assert.ok(msg.includes(':clipboard:'));
+    assert.ok(msg.includes('*Plan ready'));
+    assert.ok(msg.includes('Add Redis client'));
+    assert.ok(msg.includes('cache middleware'));
+    assert.ok(msg.includes('Files to modify'));
   });
 });
