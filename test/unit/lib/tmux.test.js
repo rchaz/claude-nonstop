@@ -1,7 +1,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { basename } from 'path';
-import { isInsideTmux, generateSessionName } from '../../../lib/tmux.js';
+import { isInsideTmux, generateSessionName, getCurrentTmuxSession } from '../../../lib/tmux.js';
 
 describe('isInsideTmux', () => {
   let origTmux;
@@ -40,7 +40,8 @@ describe('generateSessionName', () => {
     assert.match(name, /^.+-[a-f0-9]{6}$/);
   });
 
-  it('is deterministic for the same cwd', () => {
+  it('is deterministic when no tmux sessions exist', () => {
+    // When no sessions exist, both calls return the base name
     const name1 = generateSessionName();
     const name2 = generateSessionName();
     assert.equal(name1, name2);
@@ -49,5 +50,18 @@ describe('generateSessionName', () => {
   it('starts with the basename of cwd', () => {
     const expected = basename(process.cwd());
     assert.ok(generateSessionName().startsWith(expected));
+  });
+});
+
+describe('getCurrentTmuxSession', () => {
+  it('returns a string or null', () => {
+    const result = getCurrentTmuxSession();
+    // Returns a non-empty string when inside tmux, null otherwise
+    if (result !== null) {
+      assert.equal(typeof result, 'string');
+      assert.ok(result.length > 0);
+    } else {
+      assert.equal(result, null);
+    }
   });
 });
