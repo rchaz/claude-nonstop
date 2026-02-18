@@ -25,7 +25,7 @@ A separate long-running daemon. Connects to Slack via Socket Mode (WebSocket). L
 
 ### Hook Processes (`remote/hook-notify.cjs`)
 
-Short-lived processes spawned by Claude Code itself on lifecycle events (SessionStart, Stop). Each invocation reads stdin for hook context JSON and performs Slack API calls, then exits. These run in Claude Code's process environment, not in claude-nonstop's.
+Short-lived processes spawned by Claude Code itself on lifecycle events (SessionStart, Stop, PreToolUse, PostToolUse). Each invocation reads stdin for hook context JSON and performs Slack API calls, then exits. These run in Claude Code's process environment, not in claude-nonstop's.
 
 ```
 ┌─────────────────┐     node-pty      ┌──────────────┐
@@ -242,6 +242,7 @@ If `tmux send-keys` fails (non-zero exit), the webhook posts a warning to the ch
 | `session-start` | Claude Code SessionStart hook | Session created |
 | `completed` | Claude Code Stop hook | Claude completes a turn |
 | `tool-use` | Claude Code PostToolUse hook | Tool use completed (buffered, flushed every 10s) |
+| `waiting-for-input` | Claude Code PreToolUse hook | ExitPlanMode or AskUserQuestion (Claude is waiting for user input) |
 | `account-switch` | runner.js | Rate limit detected, switching to next account |
 
 ### New channel-map.json Fields

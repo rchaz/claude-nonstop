@@ -125,6 +125,7 @@ These are **hard rules**. Do not relax them.
 | `session-start` | Claude Code SessionStart hook | Create per-session Slack channel |
 | `completed` | Claude Code Stop hook | Post structured completion message |
 | `tool-use` | Claude Code PostToolUse hook | Buffer tool activity, flush to Slack every 10s |
+| `waiting-for-input` | Claude Code PreToolUse hook (ExitPlanMode, AskUserQuestion) | Notify when Claude is waiting for user input |
 | `account-switch` | runner.js (on rate limit) | Notify about account switch |
 
 ## Slack Control Commands

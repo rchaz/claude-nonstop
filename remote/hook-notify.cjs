@@ -6,12 +6,13 @@
  * Called by Claude Code hooks (Stop, SessionStart, PostToolUse) and runner.js (account-switch).
  *
  * Notification types:
- *   session-start    — Create per-session Slack channel (Claude Code hook)
- *   completed        — Post structured completion message (Claude Code hook)
- *   tool-use         — Buffer tool activity, flush to Slack every 10s (Claude Code PostToolUse hook)
- *   account-switch   — Notify about rate limit account switch (runner.js)
- *   sleep-until-reset — Notify that all accounts are near-exhausted, sleeping until reset (runner.js)
- *   sleep-wake        — Notify that sleep is complete and resuming (runner.js)
+ *   session-start      — Create per-session Slack channel (Claude Code hook)
+ *   completed          — Post structured completion message (Claude Code hook)
+ *   tool-use           — Buffer tool activity, flush to Slack every 10s (Claude Code PostToolUse hook)
+ *   waiting-for-input  — Notify when Claude is waiting for user input (Claude Code PreToolUse hook)
+ *   account-switch     — Notify about rate limit account switch (runner.js)
+ *   sleep-until-reset  — Notify that all accounts are near-exhausted, sleeping until reset (runner.js)
+ *   sleep-wake         — Notify that sleep is complete and resuming (runner.js)
  *
  * Environment:
  *   CLAUDE_REMOTE_ACCESS=true  — enables per-session Slack channels
@@ -331,6 +332,34 @@ async function main() {
         return;
     }
 
+    // Handle waiting-for-input events from PreToolUse hook (ExitPlanMode, AskUserQuestion)
+    // PreToolUse fires BEFORE the tool runs, i.e. when Claude presents the plan or question.
+    // PostToolUse fires AFTER the user responds — too late for notification.
+    if (notificationType === 'waiting-for-input') {
+        if (!isPerSessionMode() || !sessionId) return;
+
+        const toolName = hookContext?.tool_name;
+        const toolInput = hookContext?.tool_input;
+        if (!toolName || !WAITING_FOR_INPUT_TOOLS.has(toolName)) return;
+
+        const manager = createChannelManager();
+        await manager.clearProgressMessage(sessionId);
+
+        // For ExitPlanMode, read the plan content from the transcript
+        let transcriptContent = null;
+        if (toolName === 'ExitPlanMode') {
+            const transcriptPath = hookContext?.transcript_path
+                || findTranscriptPath(sessionId, currentDir);
+            if (transcriptPath) {
+                transcriptContent = getLastAssistantMessage(transcriptPath);
+            }
+        }
+
+        const text = formatWaitingMessage(toolName, toolInput, transcriptContent);
+        await manager.postToSessionChannel(sessionId, text);
+        return;
+    }
+
     // Handle tool-use events from PostToolUse hook (buffered, flush every 3s)
     if (notificationType === 'tool-use') {
         if (!isPerSessionMode() || !sessionId) return;
@@ -338,26 +367,6 @@ async function main() {
         const toolName = hookContext?.tool_name;
         const toolInput = hookContext?.tool_input;
         if (!toolName) return;
-
-        // Tools that pause for user input — post immediate notification
-        if (WAITING_FOR_INPUT_TOOLS.has(toolName)) {
-            const manager = createChannelManager();
-            await manager.clearProgressMessage(sessionId);
-
-            // For ExitPlanMode, read the plan content from the transcript
-            let transcriptContent = null;
-            if (toolName === 'ExitPlanMode') {
-                const transcriptPath = hookContext?.transcript_path
-                    || findTranscriptPath(sessionId, currentDir);
-                if (transcriptPath) {
-                    transcriptContent = getLastAssistantMessage(transcriptPath);
-                }
-            }
-
-            const text = formatWaitingMessage(toolName, toolInput, transcriptContent);
-            await manager.postToSessionChannel(sessionId, text);
-            return;
-        }
 
         const detail = extractToolDetail(toolName, toolInput);
         const event = { type: toolName, detail: detail ? detail.substring(0, 120) : null, ts: Date.now() };
