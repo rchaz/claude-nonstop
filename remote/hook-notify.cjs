@@ -280,6 +280,7 @@ function formatProgressMessage(events) {
  * @returns {string}
  */
 function formatWaitingMessage(toolName, toolInput, transcriptContent) {
+    const PLAN_INSTRUCTIONS = '\n\n:arrow_right: Reply here: *yes* to approve, or type feedback to revise the plan.';
     if (toolName === 'ExitPlanMode') {
         if (transcriptContent) {
             const mrkdwn = markdownToMrkdwn(transcriptContent);
@@ -287,20 +288,20 @@ function formatWaitingMessage(toolName, toolInput, transcriptContent) {
             const truncated = mrkdwn.length > MAX_PLAN_LENGTH
                 ? mrkdwn.substring(0, MAX_PLAN_LENGTH) + '...'
                 : mrkdwn;
-            return `:clipboard: *Plan ready \u2014 waiting for approval*\n\n${truncated}`;
+            return `:clipboard: *Plan ready \u2014 waiting for approval*\n\n${truncated}${PLAN_INSTRUCTIONS}`;
         }
-        return ':clipboard: Plan ready \u2014 waiting for approval in terminal. Use `!status` to view.';
+        return `:clipboard: Plan ready \u2014 waiting for approval.${PLAN_INSTRUCTIONS}\nUse \`!status\` to view the full plan.`;
     }
     if (toolName === 'AskUserQuestion') {
         const questions = toolInput?.questions;
         if (questions && questions.length > 0 && questions[0].question) {
             const q = questions[0].question;
             const truncated = q.length > 200 ? q.substring(0, 200) + '...' : q;
-            return `:question: Claude is asking: "${truncated}"\nRespond in terminal or use \`!status\` to view.`;
+            return `:question: Claude is asking: "${truncated}"\n\n:arrow_right: Reply here with your answer.`;
         }
-        return ':question: Claude is asking a question \u2014 respond in terminal or use `!status` to view.';
+        return ':question: Claude is asking a question \u2014 reply here with your answer, or use `!status` to view.';
     }
-    return ':hourglass: Waiting for input in terminal. Use `!status` to view.';
+    return ':hourglass: Waiting for input \u2014 reply here or use `!status` to view.';
 }
 
 // ─── Main ───────────────────────────────────────────────────────────────────

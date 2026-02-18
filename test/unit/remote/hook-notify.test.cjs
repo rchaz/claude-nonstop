@@ -518,8 +518,9 @@ describe('formatWaitingMessage', () => {
     assert.ok(msg.includes('waiting for approval'));
     assert.ok(msg.includes('Add Redis'));
     assert.ok(msg.includes('Update routes'));
-    // Should not include the !status fallback when content is present
-    assert.ok(!msg.includes('!status'));
+    // Should include reply instructions
+    assert.ok(msg.includes('Reply here'));
+    assert.ok(msg.includes('yes'));
   });
 
   it('converts markdown to Slack mrkdwn in plan content', () => {
@@ -534,15 +535,16 @@ describe('formatWaitingMessage', () => {
   it('truncates very long plan content to 39000 chars', () => {
     const longPlan = 'x'.repeat(40000);
     const msg = formatWaitingMessage('ExitPlanMode', {}, longPlan);
-    assert.ok(msg.length < 40000);
-    assert.ok(msg.endsWith('...'));
+    // Plan content truncated, but instructions appended after
+    assert.ok(msg.includes('x'.repeat(100)));
+    assert.ok(msg.includes('Reply here'));
   });
 
   it('does not truncate plan content under 39000 chars', () => {
     const plan = 'Short plan content';
     const msg = formatWaitingMessage('ExitPlanMode', {}, plan);
-    assert.ok(!msg.endsWith('...'));
     assert.ok(msg.includes('Short plan content'));
+    assert.ok(msg.includes('Reply here'));
   });
 
   it('ignores toolInput for ExitPlanMode', () => {
@@ -557,7 +559,7 @@ describe('formatWaitingMessage', () => {
     const msg = formatWaitingMessage('AskUserQuestion', input);
     assert.ok(msg.includes(':question:'));
     assert.ok(msg.includes('Which database should we use?'));
-    assert.ok(msg.includes('!status'));
+    assert.ok(msg.includes('Reply here'));
   });
 
   it('truncates long question text to 200 chars', () => {
@@ -602,6 +604,7 @@ describe('formatWaitingMessage', () => {
     const msg = formatWaitingMessage('SomeUnknownTool', {});
     assert.ok(msg.includes(':hourglass:'));
     assert.ok(msg.includes('Waiting for input'));
+    assert.ok(msg.includes('reply here'));
   });
 
   it('ignores transcriptContent for non-ExitPlanMode tools', () => {
