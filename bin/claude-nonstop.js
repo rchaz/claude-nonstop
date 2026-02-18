@@ -455,6 +455,14 @@ async function cmdRun(claudeArgs) {
     if (!claudeArgs.includes('--dangerously-skip-permissions')) {
       claudeArgs.push('--dangerously-skip-permissions');
     }
+
+    // Append formatting instruction for Slack readability
+    if (!claudeArgs.includes('--append-system-prompt')) {
+      claudeArgs.push(
+        '--append-system-prompt',
+        'Your responses are relayed to a Slack channel. Structure output for readability: use short paragraphs, bullet points, and bold headers (## Header). Separate sections with blank lines. Keep summaries concise — prefer a few clear bullets over long prose.'
+      );
+    }
   }
 
   const accounts = getAccounts();
