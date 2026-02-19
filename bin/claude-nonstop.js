@@ -1234,7 +1234,7 @@ function removeHooksFromAllProfiles() {
       if (!settings.hooks) continue;
 
       let modified = false;
-      for (const hookType of ['Stop', 'SessionStart', 'PostToolUse']) {
+      for (const hookType of ['Stop', 'SessionStart', 'PostToolUse', 'PreToolUse']) {
         if (!settings.hooks[hookType]) continue;
 
         const filtered = settings.hooks[hookType].filter(m => {
