@@ -20,21 +20,23 @@
     "bin/",
     "lib/",
     "remote/",
-    "scripts/"
+    "scripts/",
+    "slack-manifest.yaml",
+    ".env.example"
   ],
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "author": "Rahul Chandrasekaran",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/anthropics/claude-nonstop.git"
+    "url": "git+https://github.com/rchaz/claude-nonstop.git"
   },
   "bugs": {
-    "url": "https://github.com/anthropics/claude-nonstop/issues"
+    "url": "https://github.com/rchaz/claude-nonstop/issues"
   },
-  "homepage": "https://github.com/anthropics/claude-nonstop#readme",
+  "homepage": "https://github.com/rchaz/claude-nonstop#readme",
   "keywords": [
     "claude",
     "claude-code",
@@ -43,7 +45,8 @@
     "multi-account",
     "slack",
     "remote-access",
-    "tmux"
+    "tmux",
+    "anthropic"
   ],
   "dependencies": {
     "@slack/bolt": "^4.3.0",

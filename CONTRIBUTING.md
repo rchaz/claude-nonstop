@@ -4,7 +4,7 @@ Thanks for your interest in contributing! This document covers how to get starte
 
 ## Quick Links
 
-- [Issues](https://github.com/anthropics/claude-nonstop/issues)
+- [Issues](https://github.com/rchaz/claude-nonstop/issues)
 - [README](README.md)
 - [Design Document](DESIGN.md) — architecture, data flow, and security model
 
@@ -24,14 +24,14 @@ Open an issue describing the use case and proposed solution. For larger changes,
 ## Development Setup
 
 ```bash
-git clone https://github.com/anthropics/claude-nonstop.git
+git clone https://github.com/rchaz/claude-nonstop.git
 cd claude-nonstop
 npm install -g "$(npm pack)"
 ```
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 20+ (24 LTS recommended)
 - C/C++ build tools (for compiling `node-pty`): Xcode CLT on macOS, `build-essential` on Linux
 - Claude Code CLI installed
 - tmux (only needed if testing remote access features)
@@ -130,6 +130,10 @@ Add fetch timeout to usage API calls
 Prevents indefinite hangs when the Anthropic API is unreachable.
 AbortController with 10s timeout on both checkUsage() and fetchProfile().
 ```
+
+## Note on `postinstall`
+
+Running `npm install` executes `scripts/postinstall.js`, which restarts the webhook launchd service on macOS if it's already installed. This is a no-op on fresh installs and on Linux. It will never cause `npm install` to fail.
 
 ## AI-Assisted Contributions
 

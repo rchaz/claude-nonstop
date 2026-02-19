@@ -95,7 +95,7 @@ claude-nonstop hooks status
 
 ## Coding Style & Conventions
 
-- Runtime baseline: Node **18+**
+- Runtime baseline: Node **20+** (24 LTS recommended)
 - Use `const` over `let` where possible
 - Use descriptive variable names
 - Keep functions focused and small
@@ -219,7 +219,7 @@ If the user just says "set up claude-nonstop" without details, ask which feature
 ### Step 1: Prerequisites check
 
 ```bash
-node --version    # Must be >= 18.0.0
+node --version    # Must be >= 20.0.0 (24 LTS recommended)
 claude --version  # Claude Code CLI must be installed and in PATH
 ```
 
@@ -241,7 +241,7 @@ If you are already inside the claude-nonstop repo directory, skip the clone:
 ```bash
 # Only if not already cloned:
 cd ~/code  # or user's preferred directory
-git clone https://github.com/anthropics/claude-nonstop.git
+git clone https://github.com/rchaz/claude-nonstop.git
 cd claude-nonstop
 
 npm install -g "$(npm pack)"

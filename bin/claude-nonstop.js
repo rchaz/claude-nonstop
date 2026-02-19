@@ -295,7 +295,7 @@ async function cmdUpdate() {
     console.error('Could not find the claude-nonstop git repo.');
     console.error('Checked: ' + candidates.join(', '));
     console.error('\nClone it first:');
-    console.error('  git clone https://github.com/anthropics/claude-nonstop.git ~/code/claude-nonstop');
+    console.error('  git clone https://github.com/rchaz/claude-nonstop.git ~/code/claude-nonstop');
     process.exit(1);
   }
 

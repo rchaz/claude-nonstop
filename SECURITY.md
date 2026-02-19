@@ -4,7 +4,7 @@
 
 If you discover a security vulnerability in claude-nonstop, please report it responsibly.
 
-**Do not open a public issue.** Instead, email [security@claude-nonstop.dev](mailto:security@claude-nonstop.dev) or use [GitHub's private vulnerability reporting](https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/privately-reporting-a-security-vulnerability).
+**Do not open a public issue.** Instead, use [GitHub's private vulnerability reporting](https://github.com/rchaz/claude-nonstop/security/advisories/new) to submit your report directly.
 
 Include:
 
@@ -65,5 +65,5 @@ It does **not** remove OAuth credentials from the OS keychain. To remove those, 
 - Store Slack tokens in `~/.claude-nonstop/.env` (not in the project directory)
 - Use `SLACK_ALLOWED_USERS` to restrict who can send commands via Slack
 - Run the webhook process under a dedicated user if possible
-- Keep Node.js updated (18+ required, latest LTS recommended)
+- Keep Node.js updated (20+ required, 24 LTS recommended)
 - Review `~/.claude-nonstop/data/channel-map.json` periodically -- stale entries are auto-pruned after 7 days
