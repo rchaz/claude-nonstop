@@ -9,6 +9,8 @@ Multi-account switching + Slack remote access for Claude Code.
 
 **Slack remote access:** Each Claude Code session gets a dedicated Slack channel. Send messages in the channel to control Claude remotely. Claude's responses are posted back to the channel.
 
+![claude-nonstop: Slack remote access and multi-account switching](assets/screenshot.png)
+
 > **Platform:** Tested on macOS only. Linux may work but is untested.
 
 [Contributing](CONTRIBUTING.md) | [Security Policy](SECURITY.md) | [Architecture](DESIGN.md)
