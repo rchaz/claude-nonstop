@@ -199,15 +199,16 @@ This prompts for your Slack tokens, writes `~/.claude-nonstop/.env`, and install
 
 ```bash
 # Pass tokens directly
-claude-nonstop setup --bot-token xoxb-your-token --app-token xapp-your-token
+claude-nonstop setup --bot-token xoxb-your-token --app-token xapp-your-token --invite-user-id U12345ABCDE
 
 # Or read from environment (tokens stay out of shell history)
 export SLACK_BOT_TOKEN=xoxb-your-token
 export SLACK_APP_TOKEN=xapp-your-token
+export SLACK_INVITE_USER_ID=U12345ABCDE
 claude-nonstop setup --from-env
 ```
 
-Optional fields use sensible defaults when omitted. Override with additional flags:
+Optional overrides:
 
 ```bash
 claude-nonstop setup --from-env --channel-prefix myprefix --allowed-users U12345,U67890
