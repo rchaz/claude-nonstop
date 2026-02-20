@@ -89,7 +89,8 @@ Short-lived processes spawned by Claude Code itself on lifecycle events (Session
 ### Credential Handling
 
 - OAuth tokens are read-only from OS credential stores (macOS Keychain via `security find-generic-password`, Linux Secret Service via `secret-tool`, or fallback `.credentials.json`)
-- claude-nonstop never writes, modifies, or caches tokens — it reads them on demand
+- claude-nonstop reads and writes tokens to the same OS credential store entries as Claude Code — both tools share credentials seamlessly
+- Token refresh uses the same OAuth endpoint and client ID as Claude Code CLI (`console.anthropic.com/v1/oauth/token`)
 - Token format: `sk-ant-oat01-...` (access tokens), `sk-ant-ort01-...` (refresh tokens)
 - Tokens are passed to the Anthropic API via `Authorization: Bearer` header over HTTPS
 - Tokens are passed to child processes via the `CLAUDE_CONFIG_DIR` env var (Claude Code reads its own credentials)
@@ -178,9 +179,14 @@ The scorer picks the account with the lowest "effective utilization" — the hig
 
 When switching accounts, the session `.jsonl` and `tool-results/` are copied to the new account's config directory. `claude --resume` then picks them up. **Trade-off:** This duplicates data and assumes Claude Code's session format is stable.
 
-### 8. No Token Caching
+### 8. Silent Token Refresh via Shared OAuth Credentials
 
-claude-nonstop reads tokens from the OS keychain on every operation rather than caching them. This ensures freshness but adds subprocess overhead. When tokens expire, the user re-authenticates interactively via `claude-nonstop reauth`.
+claude-nonstop reads tokens from the OS keychain on every operation rather than caching them. When a token is expired or the usage API returns HTTP 401, a two-tier refresh is attempted:
+
+1. **Silent refresh:** Call the OAuth token endpoint (`console.anthropic.com/v1/oauth/token`) with the refresh token from the keychain, using the same client ID as Claude Code CLI. The new access token and refresh token are written back to the same keychain entry. Both Claude Code and claude-nonstop share the same credentials seamlessly — a `/login` in Claude Code is immediately visible to claude-nonstop, and vice versa.
+2. **Browser re-login:** If silent refresh fails (e.g., refresh token is also revoked), fall back to `claude auth login` which opens a browser for full OAuth re-authentication.
+
+**Trade-off:** Refresh tokens are single-use. If Claude Code and claude-nonstop try to refresh the same token simultaneously, one will fail. This is mitigated by writing back immediately after a successful refresh, and the failing side will retry or fall back to browser login.
 
 ### 9. launchd for Webhook Service Management
 

@@ -32,10 +32,10 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { addAccount, removeAccount, getAccounts, ensureDefaultAccount, validateAccountName, CONFIG_DIR, DEFAULT_CLAUDE_DIR } from '../lib/config.js';
 import { readCredentials, isTokenExpired, deleteKeychainEntry } from '../lib/keychain.js';
-import { checkAllUsage, fetchProfile } from '../lib/usage.js';
+import { checkAllUsage, checkUsage, fetchProfile } from '../lib/usage.js';
 import { pickBestAccount } from '../lib/scorer.js';
 import { run } from '../lib/runner.js';
-import { reauthAccount, reauthExpiredAccounts } from '../lib/reauth.js';
+import { reauthAccount, reauthExpiredAccounts, silentRefresh } from '../lib/reauth.js';
 import { isMacOS } from '../lib/platform.js';
 import { installService, uninstallService, restartService, getServiceStatus, isServiceInstalled, LOG_PATH } from '../lib/service.js';
 
@@ -254,11 +254,32 @@ async function cmdReauth() {
   }
   console.log('');
 
-  // Re-authenticate each account sequentially using shared helper
+  // First pass: try silent refresh for accounts that have tokens
   let successCount = 0;
-  for (let i = 0; i < expired.length; i++) {
-    console.log(`[${i + 1}/${expired.length}]`);
-    const success = await reauthAccount(expired[i]);
+  const stillExpired = [];
+  const silentCandidates = expired.filter(a => a.token);
+
+  if (silentCandidates.length > 0) {
+    console.log('Attempting silent token refresh...');
+    for (const account of silentCandidates) {
+      if (await silentRefresh(account)) {
+        console.log(`  ${account.name}: refreshed`);
+        successCount++;
+      } else {
+        stillExpired.push(account);
+      }
+    }
+    // Add accounts with no token (need browser login)
+    stillExpired.push(...expired.filter(a => !a.token));
+    console.log('');
+  } else {
+    stillExpired.push(...expired);
+  }
+
+  // Second pass: browser-based re-auth for remaining accounts
+  for (let i = 0; i < stillExpired.length; i++) {
+    console.log(`[${i + 1}/${stillExpired.length}]`);
+    const success = await reauthAccount(stillExpired[i]);
     if (success) successCount++;
     console.log('');
   }
@@ -382,10 +403,31 @@ async function cmdStatus() {
 
   if (authenticated.length > 0) {
     // Fetch usage and profiles in parallel
-    const [withUsage, profiles] = await Promise.all([
+    let [withUsage, profiles] = await Promise.all([
       checkAllUsage(authenticated),
       Promise.all(authenticated.map(a => fetchProfile(a.token))),
     ]);
+
+    // Silent refresh: retry accounts with auth errors (401 expired, 403 revoked)
+    const rejected = withUsage.filter(a =>
+      a.usage?.error === 'HTTP 401' || a.usage?.error === 'HTTP 403'
+    );
+    if (rejected.length > 0) {
+      for (const account of rejected) {
+        if (await silentRefresh(account)) {
+          // Re-read token and retry usage check
+          const creds = readCredentials(account.configDir);
+          if (creds.token) {
+            account.token = creds.token;
+            account.usage = await checkUsage(creds.token);
+            // Re-fetch profile with refreshed token
+            const profile = await fetchProfile(creds.token);
+            const idx = authenticated.findIndex(a => a.name === account.name);
+            if (idx !== -1) profiles[idx] = profile;
+          }
+        }
+      }
+    }
 
     // Merge profiles into usage results
     const profileMap = Object.fromEntries(authenticated.map((a, i) => [a.name, profiles[i]]));
@@ -522,8 +564,10 @@ async function cmdRun(claudeArgs) {
     console.error('[claude-nonstop] Checking usage across accounts...');
     const withUsage = await checkAllUsage(authenticated);
 
-    // Check if any authenticated accounts have API auth errors (token in keychain but rejected)
-    const apiExpired = withUsage.filter(a => a.usage?.error === 'HTTP 401');
+    // Check if any authenticated accounts have API auth errors (expired or revoked)
+    const apiExpired = withUsage.filter(a =>
+      a.usage?.error === 'HTTP 401' || a.usage?.error === 'HTTP 403'
+    );
     if (apiExpired.length > 0 && !remoteAccess) {
       const refreshed = await reauthExpiredAccounts(apiExpired);
       if (refreshed.length > 0) {
@@ -663,7 +707,9 @@ async function cmdResume(resumeArgs) {
     console.error('[claude-nonstop] Checking usage across accounts...');
     const withUsage = await checkAllUsage(authenticated);
 
-    const apiExpired = withUsage.filter(a => a.usage?.error === 'HTTP 401');
+    const apiExpired = withUsage.filter(a =>
+      a.usage?.error === 'HTTP 401' || a.usage?.error === 'HTTP 403'
+    );
     if (apiExpired.length > 0 && !remoteAccess) {
       const refreshed = await reauthExpiredAccounts(apiExpired);
       if (refreshed.length > 0) {
