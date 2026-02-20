@@ -31,7 +31,7 @@ npm install -g "$(npm pack)"
 
 ### Prerequisites
 
-- Node.js 20+ (24 LTS recommended)
+- Node.js 22+ (24 LTS recommended)
 - C/C++ build tools (for compiling `node-pty`): Xcode CLT on macOS, `build-essential` on Linux
 - Claude Code CLI installed
 - tmux (only needed if testing remote access features)

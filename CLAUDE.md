@@ -95,7 +95,7 @@ claude-nonstop hooks status
 
 ## Coding Style & Conventions
 
-- Runtime baseline: Node **20+** (24 LTS recommended)
+- Runtime baseline: Node **22+** (24 LTS recommended)
 - Use `const` over `let` where possible
 - Use descriptive variable names
 - Keep functions focused and small
@@ -219,7 +219,7 @@ If the user just says "set up claude-nonstop" without details, ask which feature
 ### Step 1: Prerequisites check
 
 ```bash
-node --version    # Must be >= 20.0.0 (24 LTS recommended)
+node --version    # Must be >= 22.0.0 (24 LTS recommended)
 claude --version  # Claude Code CLI must be installed and in PATH
 ```
 

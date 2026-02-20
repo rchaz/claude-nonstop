@@ -65,5 +65,5 @@ It does **not** remove OAuth credentials from the OS keychain. To remove those, 
 - Store Slack tokens in `~/.claude-nonstop/.env` (not in the project directory)
 - Use `SLACK_ALLOWED_USERS` to restrict who can send commands via Slack
 - Run the webhook process under a dedicated user if possible
-- Keep Node.js updated (20+ required, 24 LTS recommended)
+- Keep Node.js updated (22+ required, 24 LTS recommended)
 - Review `~/.claude-nonstop/data/channel-map.json` periodically -- stale entries are auto-pruned after 7 days

@@ -1,7 +1,7 @@
 # claude-nonstop
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Node.js](https://img.shields.io/badge/Node.js-20%2B-green.svg)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-22%2B-green.svg)](https://nodejs.org/)
 
 Multi-account switching + Slack remote access for Claude Code.
 
@@ -29,7 +29,7 @@ Claude Code will follow the [setup instructions in CLAUDE.md](CLAUDE.md#setting-
 
 **Prerequisites:**
 
-- **Node.js 20+** (24 LTS recommended) — [Download](https://nodejs.org/)
+- **Node.js 22+** (24 LTS recommended) — [Download](https://nodejs.org/)
 - **C/C++ build tools** — macOS: `xcode-select --install`
 - **Claude Code CLI** — [Install guide](https://docs.anthropic.com/en/docs/claude-code/overview). Verify with: `claude --version`
 - **2+ Claude accounts** for multi-account switching (each needs its own subscription)
