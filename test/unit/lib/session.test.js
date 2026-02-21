@@ -296,14 +296,14 @@ describe('findLatestSessionAcrossProfiles', () => {
     removeTempDir(tempDir);
   });
 
-  it('finds the newest session across all accounts', () => {
+  it('finds the newest session across all accounts for the current project', () => {
     const acctDir = join(tempDir, 'acct');
     const hash = '-tmp-project';
     mkdirSync(join(acctDir, 'projects', hash), { recursive: true });
     writeFileSync(join(acctDir, 'projects', hash, 'latest.jsonl'), 'data');
 
     const accounts = [{ name: 'acct', configDir: acctDir }];
-    const result = findLatestSessionAcrossProfiles(accounts);
+    const result = findLatestSessionAcrossProfiles(accounts, '/tmp/project');
     assert.ok(result !== null);
     assert.equal(result.sessionId, 'latest');
     assert.equal(result.account.name, 'acct');
@@ -315,7 +315,7 @@ describe('findLatestSessionAcrossProfiles', () => {
 
   it('returns null for accounts with no sessions', () => {
     const accounts = [{ name: 'empty', configDir: join(tempDir, 'empty') }];
-    assert.equal(findLatestSessionAcrossProfiles(accounts), null);
+    assert.equal(findLatestSessionAcrossProfiles(accounts, '/tmp/nonexistent'), null);
   });
 });
 

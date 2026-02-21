@@ -3,26 +3,7 @@
 /**
  * claude-nonstop — Multi-account switching + Slack remote access for Claude Code.
  *
- * Commands:
- *   [args...]           Run Claude with best account + auto-switching (default)
- *   resume [id]        Resume a session from any account (finds + migrates)
- *   add <name>         Register a new Claude account and launch login
- *   remove <name>      Remove a registered account
- *   reauth             Re-authenticate accounts with expired tokens
- *   list               List all accounts with auth status
- *   status             Show detailed usage for all accounts
- *   setup [flags]      Slack remote access setup (interactive or via flags/env)
- *   webhook            Start the Slack webhook (Socket Mode, foreground)
- *   webhook install    Install + start webhook as launchd service
- *   webhook uninstall  Stop + remove webhook launchd service
- *   webhook restart    Restart the webhook service
- *   webhook status     Show webhook service status
- *   webhook logs       Tail the webhook log file
- *   hooks install      Install hooks into all profile settings
- *   hooks status       Show hook installation status
- *   update             Reinstall from local source
- *   uninstall          Remove claude-nonstop completely
- *   help               Show this help message
+ * Run `claude-nonstop help` for usage.
  */
 
 import { spawn, execFileSync } from 'child_process';
@@ -645,10 +626,10 @@ async function cmdResume(resumeArgs) {
       process.exit(1);
     }
   } else {
-    console.error('[claude-nonstop] Searching for most recent session...');
-    found = findLatestSessionAcrossProfiles(accounts);
+    console.error('[claude-nonstop] Searching for most recent session in this project...');
+    found = findLatestSessionAcrossProfiles(accounts, process.cwd());
     if (!found) {
-      console.error('Error: No sessions found in any account.');
+      console.error('Error: No sessions found for this project in any account.');
       process.exit(1);
     }
   }
@@ -754,6 +735,31 @@ async function cmdResume(resumeArgs) {
 // ─── Setup & Hooks Commands ─────────────────────────────────────────────────
 
 async function cmdSetup(setupArgs = []) {
+  if (setupArgs.includes('--help') || setupArgs.includes('-h') || setupArgs.includes('help')) {
+    console.log(`
+claude-nonstop setup — Configure Slack remote access
+
+Usage:
+  claude-nonstop setup                           Interactive setup (prompts for tokens)
+  claude-nonstop setup --bot-token <tok> --app-token <tok>   Non-interactive
+  claude-nonstop setup --from-env                Read tokens from environment
+
+Options:
+  --bot-token <tok>        Slack bot token (xoxb-...)
+  --app-token <tok>        Slack app token (xapp-...)
+  --from-env               Read SLACK_BOT_TOKEN, SLACK_APP_TOKEN from environment
+  --invite-user-id <id>    Auto-invite your Slack user to session channels
+  --channel-id <id>        Slack channel ID for single-channel mode
+  --allowed-users <ids>    Comma-separated Slack user IDs allowed to send commands
+  --channel-prefix <p>     Prefix for channel names (default: cn)
+  --default-tmux-session <name>  Default tmux session for single-channel/DM mode
+
+When --bot-token and --app-token are provided (or --from-env), setup runs
+non-interactively. On macOS, setup also installs the webhook as a launchd service.
+`.trim());
+    return;
+  }
+
   console.log('claude-nonstop Slack Remote Access Setup\n');
 
   const { flags, fromEnv } = parseSetupFlags(setupArgs);
@@ -1391,85 +1397,30 @@ function printHelp() {
 claude-nonstop — Multi-account switching + Slack remote access for Claude Code
 
 Usage:
-  claude-nonstop [args...]     Run Claude with best account + auto-switching
+  claude-nonstop                       Run Claude (best account, auto-switching)
+  claude-nonstop -p "prompt"           One-shot prompt
+  claude-nonstop status                Show usage across all accounts
+  claude-nonstop --remote-access       Run with tmux + Slack channels
 
 Commands:
-  resume [id]          Resume a session from any account (finds + migrates)
-  add <name>           Register a new Claude account and launch login
-  remove <name>        Remove a registered account
-  reauth               Re-authenticate accounts with expired tokens
-  list                 List all accounts with auth status
-  status               Show detailed usage for all accounts
-  setup [flags]        Slack remote access setup (interactive or via flags/env)
-  webhook              Show webhook subcommands
-  webhook start        Start the Slack webhook in foreground (for debugging)
-  webhook install      Install + start webhook as launchd service (macOS)
-  webhook uninstall    Stop + remove webhook launchd service
-  webhook restart      Restart the webhook service
-  webhook status       Show webhook service status (installed/running/PID)
-  webhook logs         Tail the webhook log file
-  hooks install        Install Claude Code hooks into all profile settings
-  hooks status         Show hook installation status
-  update               Reinstall from local source (preserves all config)
-  uninstall            Remove claude-nonstop completely (service, hooks, config)
-  help                 Show this help message
+  status               Show usage with progress bars and reset times
+  add <name>           Add a new Claude account
+  remove <name>        Remove an account
+  list                 List accounts with auth status
+  reauth               Re-authenticate expired accounts
+  resume [id]          Resume most recent session, or a specific one by ID
+  setup                Configure Slack remote access
+  webhook              Webhook service management
+  hooks                Hook management
+  update               Reinstall from local source
+  uninstall            Remove claude-nonstop completely
 
 Options:
-  --account <name>, -a <name>
-                     Use a specific account (skip auto-selection)
-  --remote-access    Auto-create tmux session + enable Slack per-session channels
-                     Implies --dangerously-skip-permissions
+  -a, --account <name>    Use a specific account
+  --remote-access         Run in tmux with Slack channels
 
-Options for setup:
-  --bot-token <tok>  Slack bot token (xoxb-...)
-  --app-token <tok>  Slack app token (xapp-...)
-  --from-env         Read SLACK_BOT_TOKEN and SLACK_APP_TOKEN from environment
-  --channel-id <id>  Slack channel ID for single-channel mode
-  --allowed-users <ids>  Comma-separated Slack user IDs
-  --invite-user-id <id>  Auto-invite user to session channels
-  --channel-prefix <p>   Prefix for channel names (default: cn)
-
-  When --bot-token and --app-token are provided (or --from-env), setup
-  runs non-interactively using defaults for omitted optional fields.
-  On macOS, setup also installs the webhook as a launchd service.
-
-Options for uninstall:
-  --force            Skip confirmation prompt
-
-Examples:
-  claude-nonstop                        # Run with best account
-  claude-nonstop -a work                # Run with specific account
-  claude-nonstop -a work -p "fix bug"   # One-shot with specific account
-  claude-nonstop resume                 # Resume most recent session (any account)
-  claude-nonstop resume abc123          # Resume specific session by ID
-  claude-nonstop resume -a work         # Resume with specific account
-  claude-nonstop -p "fix bug"           # One-shot prompt (args passed to Claude)
-  claude-nonstop --remote-access        # Full remote access (tmux + Slack)
-  claude-nonstop add work               # Add a second account
-  claude-nonstop status                 # Check usage across all accounts
-  claude-nonstop setup                  # Configure Slack (interactive)
-  claude-nonstop setup --from-env       # Configure Slack from env vars
-  claude-nonstop webhook                # Show webhook subcommands
-  claude-nonstop webhook install        # Install webhook as background service
-  claude-nonstop webhook status         # Check if webhook is running
-  claude-nonstop uninstall              # Full cleanup
-
-Multi-account switching:
-  1. Checks usage API for all accounts on launch (~200ms)
-  2. Picks the account with the lowest utilization
-  3. Monitors output in real-time for rate limit messages
-  4. On rate limit: kills idle process, migrates session, resumes
-     on the next best account — fully automatic
-Remote access (--remote-access):
-  1. Creates a tmux session named after the current directory
-  2. Sets CLAUDE_REMOTE_ACCESS=true — each session gets a Slack channel
-  3. Enables --dangerously-skip-permissions for unattended operation
-  4. Slack webhook relays messages from Slack channels to tmux
-
-Quick start:
-  claude-nonstop add work        # Add account (opens browser for OAuth)
-  claude-nonstop setup           # Configure Slack tokens (auto-installs webhook)
-  claude-nonstop --remote-access
+All other arguments are passed through to \`claude\`.
+Run \`setup --help\`, \`webhook\`, or \`hooks\` for subcommand details.
 `.trim());
 }
 
