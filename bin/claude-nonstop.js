@@ -83,6 +83,10 @@ switch (command) {
     await cmdSetPriority(args.slice(1));
     break;
 
+  case 'init':
+    cmdInit(args[1]);
+    break;
+
   case 'help':
   case '--help':
   case '-h':
@@ -879,6 +883,40 @@ async function cmdSetPriority(priorityArgs) {
   }
 }
 
+// ─── Init (shell integration) ───────────────────────────────────────────────
+
+function cmdInit(shell) {
+  if (!shell || !['bash', 'zsh'].includes(shell)) {
+    console.error('Usage: claude-nonstop init <bash|zsh>');
+    console.error('');
+    console.error('Add this to your shell config:');
+    console.error('  # ~/.bashrc');
+    console.error('  eval "$(claude-nonstop init bash)"');
+    console.error('  # ~/.zshrc');
+    console.error('  eval "$(claude-nonstop init zsh)"');
+    process.exit(1);
+  }
+
+  // Output a shell function that wraps `claude-nonstop use` with eval.
+  // stdout has export/unset commands, stderr has human-readable messages.
+  // The wrapper captures stdout, evals it, and lets stderr pass through naturally.
+  console.log(`
+claude-nonstop() {
+  if [ "\$1" = "use" ] && [ \$# -gt 1 ]; then
+    local shell_code
+    shell_code="\$(command claude-nonstop "\$@")"
+    local exit_code=\$?
+    if [ \$exit_code -eq 0 ] && [ -n "\$shell_code" ]; then
+      eval "\$shell_code"
+    fi
+    return \$exit_code
+  else
+    command claude-nonstop "\$@"
+  fi
+}
+`.trim());
+}
+
 // ─── Setup & Hooks Commands ─────────────────────────────────────────────────
 
 async function cmdSetup(setupArgs = []) {
@@ -1556,12 +1594,14 @@ Commands:
   list                 List accounts with auth status
   reauth               Re-authenticate expired accounts
   resume [id]          Resume most recent session, or a specific one by ID
+  init <bash|zsh>      Shell integration (add to ~/.bashrc or ~/.zshrc):
+                         eval "$(claude-nonstop init bash)"
   use [name|flag]      Switch active account for current shell (Agent SDK, etc.)
-                         eval $(claude-nonstop use <name>)       Explicit account
-                         eval $(claude-nonstop use --best)       Lowest utilization (ignores priority)
-                         eval $(claude-nonstop use --priority)   Highest priority under 98% usage
-                         eval $(claude-nonstop use --unset)      Revert to default ~/.claude
-                         claude-nonstop use                      Show current active account
+                         use <name>       Explicit account
+                         use --best       Lowest utilization (ignores priority)
+                         use --priority   Highest priority under 98% usage
+                         use --unset      Revert to default ~/.claude
+                         use              Show current active account
   set-priority <name> <n>  Set account priority (1 = highest). Use "clear" to remove.
   setup                Configure Slack remote access
   webhook              Webhook service management
