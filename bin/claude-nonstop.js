@@ -763,7 +763,9 @@ async function cmdUse(useArgs) {
 
   // --unset — revert to default
   if (flag === '--unset') {
+    // stdout: eval-friendly command; stderr: human message
     console.log('unset CLAUDE_CONFIG_DIR');
+    console.error(`Reverted to default account (${DEFAULT_CLAUDE_DIR})`);
     return;
   }
 
@@ -789,8 +791,8 @@ async function cmdUse(useArgs) {
       process.exit(1);
     }
 
-    console.error(`[claude-nonstop] Selected "${best.account.name}" (${best.reason})`);
     console.log(`export CLAUDE_CONFIG_DIR="${best.account.configDir}"`);
+    console.error(`Switched to "${best.account.name}" (${best.reason})`);
     return;
   }
 
@@ -816,8 +818,8 @@ async function cmdUse(useArgs) {
       process.exit(1);
     }
 
-    console.error(`[claude-nonstop] Selected "${best.account.name}" (${best.reason})`);
     console.log(`export CLAUDE_CONFIG_DIR="${best.account.configDir}"`);
+    console.error(`Switched to "${best.account.name}" (${best.reason})`);
     return;
   }
 
@@ -838,6 +840,7 @@ async function cmdUse(useArgs) {
   }
 
   console.log(`export CLAUDE_CONFIG_DIR="${account.configDir}"`);
+  console.error(`Switched to "${account.name}" (${account.configDir})`);
 }
 
 async function cmdSetPriority(priorityArgs) {
@@ -1554,11 +1557,11 @@ Commands:
   reauth               Re-authenticate expired accounts
   resume [id]          Resume most recent session, or a specific one by ID
   use [name|flag]      Switch active account for current shell (Agent SDK, etc.)
-                         use <name>       Explicit account
-                         use --best       Lowest utilization (ignores priority)
-                         use --priority   Highest priority under 98% usage
-                         use --unset      Revert to default ~/.claude
-                         use              Show current active account
+                         eval $(claude-nonstop use <name>)       Explicit account
+                         eval $(claude-nonstop use --best)       Lowest utilization (ignores priority)
+                         eval $(claude-nonstop use --priority)   Highest priority under 98% usage
+                         eval $(claude-nonstop use --unset)      Revert to default ~/.claude
+                         claude-nonstop use                      Show current active account
   set-priority <name> <n>  Set account priority (1 = highest). Use "clear" to remove.
   setup                Configure Slack remote access
   webhook              Webhook service management
