@@ -87,6 +87,10 @@ switch (command) {
     await cmdSwap(args.slice(1));
     break;
 
+  case 'active':
+    cmdActive();
+    break;
+
   case 'init':
     cmdInit(args[1]);
     break;
@@ -974,6 +978,45 @@ async function cmdSwap(swapArgs) {
   console.log('To restore original: claude-nonstop swap --restore');
 }
 
+// ─── Active (detect which account is currently swapped in) ──────────────────
+
+function cmdActive() {
+  const activeConfigDir = process.env.CLAUDE_CONFIG_DIR || DEFAULT_CLAUDE_DIR;
+  const activeCredFile = join(activeConfigDir, '.credentials.json');
+
+  if (!existsSync(activeCredFile)) {
+    console.log('none');
+    return;
+  }
+
+  const activeCreds = readFileSync(activeCredFile, 'utf-8');
+  const accounts = getAccounts();
+
+  // Find which account's credentials match the active credentials.
+  // Skip the account whose configDir IS the active config dir (self-comparison always matches).
+  // If no other account matches, the active dir has its own original credentials.
+  const selfAccount = accounts.find(a => a.configDir === activeConfigDir);
+  const otherAccounts = accounts.filter(a => a.configDir !== activeConfigDir);
+
+  for (const account of otherAccounts) {
+    const accountCredFile = join(account.configDir, '.credentials.json');
+    if (!existsSync(accountCredFile)) continue;
+
+    const accountCreds = readFileSync(accountCredFile, 'utf-8');
+    if (activeCreds === accountCreds) {
+      console.log(account.name);
+      return;
+    }
+  }
+
+  // No other account matched — active dir has its original credentials
+  if (selfAccount) {
+    console.log(selfAccount.name);
+  } else {
+    console.log('unknown');
+  }
+}
+
 // ─── Init (shell integration) ───────────────────────────────────────────────
 
 function cmdInit(shell) {
@@ -1695,6 +1738,7 @@ Commands:
                          use              Show current active account
   set-priority <name> <n>  Set account priority (1 = highest). Use "clear" to remove.
   swap <name>          Hot-swap credentials into active session (no restart needed)
+  active               Show which account's credentials are currently active
   setup                Configure Slack remote access
   webhook              Webhook service management
   hooks                Hook management
