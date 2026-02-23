@@ -897,13 +897,35 @@ async function cmdSwap(swapArgs) {
 
   if (!targetName) {
     console.error('Usage: claude-nonstop swap <account>');
+    console.error('       claude-nonstop swap --restore');
     console.error('');
     console.error('Hot-swaps credentials into the currently active config directory.');
     console.error('Running Claude Code sessions will pick up the new credentials');
     console.error('on their next API call — no restart needed.');
     console.error('');
+    console.error('Use --restore to put back the original credentials.');
+    console.error('');
     console.error('Example: claude-nonstop swap main');
     process.exit(1);
+  }
+
+  const activeConfigDir = process.env.CLAUDE_CONFIG_DIR || DEFAULT_CLAUDE_DIR;
+  const activeCredFile = join(activeConfigDir, '.credentials.json');
+  const backupCredFile = join(activeConfigDir, '.credentials.json.backup');
+
+  // --restore: put back the original credentials
+  if (targetName === '--restore') {
+    if (!existsSync(backupCredFile)) {
+      console.error('No backup found. Nothing to restore.');
+      process.exit(1);
+    }
+    const backupData = readFileSync(backupCredFile, 'utf-8');
+    const tmpFile = `${activeCredFile}.${process.pid}.${Date.now()}.tmp`;
+    writeFileSync(tmpFile, backupData, { mode: 0o600 });
+    renameSync(tmpFile, activeCredFile);
+    console.log('Restored original credentials from backup.');
+    console.log('Running sessions will use the original credentials on next API call.');
+    return;
   }
 
   const accounts = getAccounts();
@@ -915,8 +937,6 @@ async function cmdSwap(swapArgs) {
     process.exit(1);
   }
 
-  // Determine which config dir is currently active
-  const activeConfigDir = process.env.CLAUDE_CONFIG_DIR || DEFAULT_CLAUDE_DIR;
   const activeAccount = accounts.find(a => a.configDir === activeConfigDir);
   const activeLabel = activeAccount ? activeAccount.name : 'unknown';
 
@@ -932,17 +952,20 @@ async function cmdSwap(swapArgs) {
     process.exit(1);
   }
 
-  // Read the raw credentials file from the target
   const targetCredFile = join(target.configDir, '.credentials.json');
   if (!existsSync(targetCredFile)) {
     console.error(`Error: Credentials file not found for "${targetName}".`);
     process.exit(1);
   }
 
-  const credData = readFileSync(targetCredFile, 'utf-8');
+  // Back up current credentials (only if no backup exists — preserve the original)
+  if (existsSync(activeCredFile) && !existsSync(backupCredFile)) {
+    const currentData = readFileSync(activeCredFile, 'utf-8');
+    writeFileSync(backupCredFile, currentData, { mode: 0o600 });
+  }
 
-  // Write into the active config dir's credentials file (atomic)
-  const activeCredFile = join(activeConfigDir, '.credentials.json');
+  // Write target credentials into the active config dir (atomic)
+  const credData = readFileSync(targetCredFile, 'utf-8');
   const tmpFile = `${activeCredFile}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync(tmpFile, credData, { mode: 0o600 });
   renameSync(tmpFile, activeCredFile);
@@ -950,6 +973,8 @@ async function cmdSwap(swapArgs) {
   console.log(`Swapped credentials: "${activeLabel}" → "${targetName}"`);
   console.log(`Active config dir: ${activeConfigDir}`);
   console.log('Running sessions will use the new credentials on next API call.');
+  console.log('');
+  console.log('To restore original: claude-nonstop swap --restore');
 }
 
 // ─── Init (shell integration) ───────────────────────────────────────────────
