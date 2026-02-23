@@ -577,7 +577,7 @@ async function cmdRun(claudeArgs) {
       }
     }
 
-    const best = pickBestAccount(withUsage);
+    const best = pickBestAccount(withUsage, undefined, { usePriority: true });
 
     if (best) {
       selectedAccount = best.account;
@@ -717,7 +717,7 @@ async function cmdResume(resumeArgs) {
       }
     }
 
-    const best = pickBestAccount(withUsage);
+    const best = pickBestAccount(withUsage, undefined, { usePriority: true });
 
     if (best) {
       selectedAccount = best.account;
