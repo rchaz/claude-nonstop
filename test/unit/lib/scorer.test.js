@@ -1,12 +1,13 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { pickBestAccount } from '../../../lib/scorer.js';
+import { pickBestAccount, pickByPriority, PRIORITY_THRESHOLD } from '../../../lib/scorer.js';
 
 describe('pickBestAccount', () => {
   const makeAccount = (name, sessionPercent, weeklyPercent, opts = {}) => ({
     name,
     configDir: `/tmp/profiles/${name}`,
     token: 'token' in opts ? opts.token : 'sk-ant-oat01-valid',
+    priority: opts.priority ?? undefined,
     usage: opts.error
       ? { error: opts.error }
       : { sessionPercent, weeklyPercent },
@@ -132,5 +133,141 @@ describe('pickBestAccount', () => {
     ];
     const result = pickBestAccount(accounts);
     assert.equal(result.account.name, 'valid');
+  });
+
+  // Without usePriority, priority is ignored
+  it('ignores priority when usePriority is false (default)', () => {
+    const accounts = [
+      makeAccount('pri1', 80, 80, { priority: 1 }),  // effective: 80
+      makeAccount('pri2', 10, 10, { priority: 2 }),   // effective: 10
+    ];
+    const result = pickBestAccount(accounts);
+    // Default: lowest utilization wins, regardless of priority
+    assert.equal(result.account.name, 'pri2');
+  });
+});
+
+describe('pickBestAccount with usePriority', () => {
+  const makeAccount = (name, sessionPercent, weeklyPercent, opts = {}) => ({
+    name,
+    configDir: `/tmp/profiles/${name}`,
+    token: 'token' in opts ? opts.token : 'sk-ant-oat01-valid',
+    priority: opts.priority ?? undefined,
+    usage: opts.error
+      ? { error: opts.error }
+      : { sessionPercent, weeklyPercent },
+  });
+
+  it('picks highest priority account even with higher utilization', () => {
+    const accounts = [
+      makeAccount('main', 60, 60, { priority: 1 }),     // effective: 60
+      makeAccount('backup', 10, 10, { priority: 2 }),    // effective: 10
+    ];
+    const result = pickBestAccount(accounts, undefined, { usePriority: true });
+    assert.equal(result.account.name, 'main');
+  });
+
+  it('skips exhausted priority 1 and falls back to priority 2', () => {
+    const accounts = [
+      makeAccount('main', PRIORITY_THRESHOLD, PRIORITY_THRESHOLD, { priority: 1 }),
+      makeAccount('backup', 10, 10, { priority: 2 }),
+    ];
+    const result = pickBestAccount(accounts, undefined, { usePriority: true });
+    assert.equal(result.account.name, 'backup');
+  });
+
+  it('skips account at 100% and uses next priority', () => {
+    const accounts = [
+      makeAccount('main', 100, 100, { priority: 1 }),
+      makeAccount('backup', 50, 50, { priority: 2 }),
+    ];
+    const result = pickBestAccount(accounts, undefined, { usePriority: true });
+    assert.equal(result.account.name, 'backup');
+  });
+
+  it('accounts without priority are treated as lowest priority', () => {
+    const accounts = [
+      makeAccount('no-pri', 10, 10),                     // no priority = Infinity
+      makeAccount('has-pri', 50, 50, { priority: 1 }),   // priority 1
+    ];
+    const result = pickBestAccount(accounts, undefined, { usePriority: true });
+    assert.equal(result.account.name, 'has-pri');
+  });
+
+  it('same priority falls back to lower utilization', () => {
+    const accounts = [
+      makeAccount('a', 80, 80, { priority: 1 }),
+      makeAccount('b', 20, 20, { priority: 1 }),
+    ];
+    const result = pickBestAccount(accounts, undefined, { usePriority: true });
+    assert.equal(result.account.name, 'b');
+  });
+
+  it('all exhausted — picks by priority then utilization', () => {
+    const accounts = [
+      makeAccount('a', 99, 99, { priority: 2 }),
+      makeAccount('b', 98, 100, { priority: 1 }),
+    ];
+    const result = pickBestAccount(accounts, undefined, { usePriority: true });
+    // Both exhausted (>= 98%), priority 1 wins
+    assert.equal(result.account.name, 'b');
+  });
+
+  it('excludeName still works with priority', () => {
+    const accounts = [
+      makeAccount('main', 10, 10, { priority: 1 }),
+      makeAccount('backup', 50, 50, { priority: 2 }),
+    ];
+    const result = pickBestAccount(accounts, 'main', { usePriority: true });
+    assert.equal(result.account.name, 'backup');
+  });
+
+  it('includes priority in reason string', () => {
+    const accounts = [makeAccount('test', 25, 30, { priority: 1 })];
+    const result = pickBestAccount(accounts, undefined, { usePriority: true });
+    assert.ok(result.reason.includes('priority'));
+    assert.ok(result.reason.includes('1'));
+  });
+
+  it('cascades through multiple priority levels', () => {
+    const accounts = [
+      makeAccount('main', 99, 99, { priority: 1 }),       // exhausted
+      makeAccount('backup1', 99, 99, { priority: 2 }),     // exhausted
+      makeAccount('backup2', 50, 50, { priority: 3 }),     // available
+    ];
+    const result = pickBestAccount(accounts, undefined, { usePriority: true });
+    assert.equal(result.account.name, 'backup2');
+  });
+});
+
+describe('pickByPriority', () => {
+  const makeAccount = (name, sessionPercent, weeklyPercent, opts = {}) => ({
+    name,
+    configDir: `/tmp/profiles/${name}`,
+    token: 'token' in opts ? opts.token : 'sk-ant-oat01-valid',
+    priority: opts.priority ?? undefined,
+    usage: opts.error
+      ? { error: opts.error }
+      : { sessionPercent, weeklyPercent },
+  });
+
+  it('is a convenience wrapper that uses priority', () => {
+    const accounts = [
+      makeAccount('main', 60, 60, { priority: 1 }),
+      makeAccount('backup', 10, 10, { priority: 2 }),
+    ];
+    const result = pickByPriority(accounts);
+    assert.equal(result.account.name, 'main');
+  });
+
+  it('returns null for empty array', () => {
+    const result = pickByPriority([]);
+    assert.equal(result, null);
+  });
+});
+
+describe('PRIORITY_THRESHOLD', () => {
+  it('is 98', () => {
+    assert.equal(PRIORITY_THRESHOLD, 98);
   });
 });

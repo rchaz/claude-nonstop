@@ -11,10 +11,10 @@ import { createInterface } from 'readline';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, renameSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { addAccount, removeAccount, getAccounts, ensureDefaultAccount, validateAccountName, CONFIG_DIR, DEFAULT_CLAUDE_DIR } from '../lib/config.js';
+import { addAccount, removeAccount, getAccounts, ensureDefaultAccount, validateAccountName, setAccountPriority, clearAccountPriority, CONFIG_DIR, DEFAULT_CLAUDE_DIR } from '../lib/config.js';
 import { readCredentials, isTokenExpired, deleteKeychainEntry } from '../lib/keychain.js';
 import { checkAllUsage, checkUsage, fetchProfile } from '../lib/usage.js';
-import { pickBestAccount } from '../lib/scorer.js';
+import { pickBestAccount, pickByPriority } from '../lib/scorer.js';
 import { run } from '../lib/runner.js';
 import { reauthAccount, reauthExpiredAccounts, silentRefresh } from '../lib/reauth.js';
 import { isMacOS } from '../lib/platform.js';
@@ -73,6 +73,14 @@ switch (command) {
 
   case 'resume':
     await cmdResume(args.slice(1));
+    break;
+
+  case 'use':
+    await cmdUse(args.slice(1));
+    break;
+
+  case 'set-priority':
+    await cmdSetPriority(args.slice(1));
     break;
 
   case 'help':
@@ -353,11 +361,12 @@ async function cmdList() {
     return { ...account, creds, profile };
   }));
 
-  for (const { name, configDir, creds, profile } of enriched) {
-    const status = creds.token ? 'authenticated' : 'not authenticated';
-    const userInfo = formatUserInfo(profile);
-    console.log(`  ${name}${userInfo}`);
-    console.log(`    Config: ${configDir}`);
+  for (const entry of enriched) {
+    const status = entry.creds.token ? 'authenticated' : 'not authenticated';
+    const userInfo = formatUserInfo(entry.profile);
+    const priLabel = entry.priority != null ? ` (priority: ${entry.priority})` : '';
+    console.log(`  ${entry.name}${userInfo}${priLabel}`);
+    console.log(`    Config: ${entry.configDir}`);
     console.log(`    Status: ${status}`);
     console.log('');
   }
@@ -421,8 +430,9 @@ async function cmdStatus() {
       const isBest = account.name === bestName;
       const marker = isBest ? ' <-- best' : '';
       const userInfo = formatUserInfo(profileMap[account.name] || {});
+      const priLabel = account.priority != null ? ` (priority: ${account.priority})` : '';
 
-      console.log(`  ${account.name}${userInfo}${marker}`);
+      console.log(`  ${account.name}${userInfo}${priLabel}${marker}`);
 
       if (account.usage.error) {
         console.log(`    Usage: error (${account.usage.error})`);
@@ -730,6 +740,140 @@ async function cmdResume(resumeArgs) {
   }
 
   await run(claudeArgs, selectedAccount, accounts, { remoteAccess });
+}
+
+// ─── Use & Priority Commands ────────────────────────────────────────────────
+
+async function cmdUse(useArgs) {
+  const flag = useArgs[0];
+
+  // No args — show current active profile
+  if (!flag) {
+    const current = process.env.CLAUDE_CONFIG_DIR;
+    if (current) {
+      const accounts = getAccounts();
+      const match = accounts.find(a => a.configDir === current);
+      const label = match ? match.name : 'unknown';
+      console.error(`Current: ${label} (${current})`);
+    } else {
+      console.error(`Current: default (${DEFAULT_CLAUDE_DIR})`);
+    }
+    return;
+  }
+
+  // --unset — revert to default
+  if (flag === '--unset') {
+    console.log('unset CLAUDE_CONFIG_DIR');
+    return;
+  }
+
+  // --best — pick lowest utilization (no priority)
+  if (flag === '--best') {
+    const accounts = getAccounts();
+    const accountsWithCreds = accounts.map(a => {
+      const creds = readCredentials(a.configDir);
+      return { ...a, token: creds.token };
+    });
+    const authenticated = accountsWithCreds.filter(a => a.token);
+
+    if (authenticated.length === 0) {
+      console.error('Error: No authenticated accounts.');
+      process.exit(1);
+    }
+
+    const withUsage = await checkAllUsage(authenticated);
+    const best = pickBestAccount(withUsage);
+
+    if (!best) {
+      console.error('Error: No suitable accounts found.');
+      process.exit(1);
+    }
+
+    console.error(`[claude-nonstop] Selected "${best.account.name}" (${best.reason})`);
+    console.log(`export CLAUDE_CONFIG_DIR="${best.account.configDir}"`);
+    return;
+  }
+
+  // --priority — pick by priority hierarchy (98% threshold)
+  if (flag === '--priority') {
+    const accounts = getAccounts();
+    const accountsWithCreds = accounts.map(a => {
+      const creds = readCredentials(a.configDir);
+      return { ...a, token: creds.token };
+    });
+    const authenticated = accountsWithCreds.filter(a => a.token);
+
+    if (authenticated.length === 0) {
+      console.error('Error: No authenticated accounts.');
+      process.exit(1);
+    }
+
+    const withUsage = await checkAllUsage(authenticated);
+    const best = pickByPriority(withUsage);
+
+    if (!best) {
+      console.error('Error: No suitable accounts found.');
+      process.exit(1);
+    }
+
+    console.error(`[claude-nonstop] Selected "${best.account.name}" (${best.reason})`);
+    console.log(`export CLAUDE_CONFIG_DIR="${best.account.configDir}"`);
+    return;
+  }
+
+  // Explicit account name
+  const name = flag;
+  const accounts = getAccounts();
+  const account = accounts.find(a => a.name === name);
+
+  if (!account) {
+    console.error(`Error: Account "${name}" not found.`);
+    console.error(`Available accounts: ${accounts.map(a => a.name).join(', ')}`);
+    process.exit(1);
+  }
+
+  const creds = readCredentials(account.configDir);
+  if (!creds.token) {
+    console.error(`Warning: Account "${name}" is not authenticated. Run "claude-nonstop reauth" first.`);
+  }
+
+  console.log(`export CLAUDE_CONFIG_DIR="${account.configDir}"`);
+}
+
+async function cmdSetPriority(priorityArgs) {
+  const name = priorityArgs[0];
+  const priorityStr = priorityArgs[1];
+
+  if (!name) {
+    console.error('Usage: claude-nonstop set-priority <account> <number>');
+    console.error('       claude-nonstop set-priority <account> clear');
+    console.error('Example: claude-nonstop set-priority main 1');
+    process.exit(1);
+  }
+
+  try {
+    if (priorityStr === 'clear' || priorityStr === undefined) {
+      if (priorityStr === 'clear') {
+        clearAccountPriority(name);
+        console.log(`Priority cleared for "${name}".`);
+      } else {
+        console.error('Usage: claude-nonstop set-priority <account> <number>');
+        console.error('       claude-nonstop set-priority <account> clear');
+        process.exit(1);
+      }
+    } else {
+      const priority = parseInt(priorityStr, 10);
+      if (isNaN(priority)) {
+        console.error('Error: Priority must be a positive integer.');
+        process.exit(1);
+      }
+      setAccountPriority(name, priority);
+      console.log(`Priority for "${name}" set to ${priority}.`);
+    }
+  } catch (err) {
+    console.error(`Error: ${err.message}`);
+    process.exit(1);
+  }
 }
 
 // ─── Setup & Hooks Commands ─────────────────────────────────────────────────
@@ -1409,6 +1553,13 @@ Commands:
   list                 List accounts with auth status
   reauth               Re-authenticate expired accounts
   resume [id]          Resume most recent session, or a specific one by ID
+  use [name|flag]      Switch active account for current shell (Agent SDK, etc.)
+                         use <name>       Explicit account
+                         use --best       Lowest utilization (ignores priority)
+                         use --priority   Highest priority under 98% usage
+                         use --unset      Revert to default ~/.claude
+                         use              Show current active account
+  set-priority <name> <n>  Set account priority (1 = highest). Use "clear" to remove.
   setup                Configure Slack remote access
   webhook              Webhook service management
   hooks                Hook management
