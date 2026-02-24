@@ -2,16 +2,17 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { pickBestAccount, pickByPriority, PRIORITY_THRESHOLD } from '../../../lib/scorer.js';
 
+const makeAccount = (name, sessionPercent, weeklyPercent, opts = {}) => ({
+  name,
+  configDir: `/tmp/profiles/${name}`,
+  token: 'token' in opts ? opts.token : 'sk-ant-oat01-valid',
+  priority: opts.priority ?? undefined,
+  usage: opts.error
+    ? { error: opts.error }
+    : { sessionPercent, weeklyPercent },
+});
+
 describe('pickBestAccount', () => {
-  const makeAccount = (name, sessionPercent, weeklyPercent, opts = {}) => ({
-    name,
-    configDir: `/tmp/profiles/${name}`,
-    token: 'token' in opts ? opts.token : 'sk-ant-oat01-valid',
-    priority: opts.priority ?? undefined,
-    usage: opts.error
-      ? { error: opts.error }
-      : { sessionPercent, weeklyPercent },
-  });
 
   it('picks the account with the lowest utilization', () => {
     const accounts = [
@@ -148,16 +149,6 @@ describe('pickBestAccount', () => {
 });
 
 describe('pickBestAccount with usePriority', () => {
-  const makeAccount = (name, sessionPercent, weeklyPercent, opts = {}) => ({
-    name,
-    configDir: `/tmp/profiles/${name}`,
-    token: 'token' in opts ? opts.token : 'sk-ant-oat01-valid',
-    priority: opts.priority ?? undefined,
-    usage: opts.error
-      ? { error: opts.error }
-      : { sessionPercent, weeklyPercent },
-  });
-
   it('picks highest priority account even with higher utilization', () => {
     const accounts = [
       makeAccount('main', 60, 60, { priority: 1 }),     // effective: 60
@@ -241,16 +232,6 @@ describe('pickBestAccount with usePriority', () => {
 });
 
 describe('pickByPriority', () => {
-  const makeAccount = (name, sessionPercent, weeklyPercent, opts = {}) => ({
-    name,
-    configDir: `/tmp/profiles/${name}`,
-    token: 'token' in opts ? opts.token : 'sk-ant-oat01-valid',
-    priority: opts.priority ?? undefined,
-    usage: opts.error
-      ? { error: opts.error }
-      : { sessionPercent, weeklyPercent },
-  });
-
   it('is a convenience wrapper that uses priority', () => {
     const accounts = [
       makeAccount('main', 60, 60, { priority: 1 }),

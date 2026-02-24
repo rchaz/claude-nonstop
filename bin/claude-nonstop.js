@@ -581,7 +581,9 @@ async function cmdRun(claudeArgs) {
       }
     }
 
-    const best = pickBestAccount(withUsage, undefined, { usePriority: true });
+    // Only use priority sorting when at least one account has a priority set
+    const hasPriorities = withUsage.some(a => a.priority != null);
+    const best = pickBestAccount(withUsage, undefined, { usePriority: hasPriorities });
 
     if (best) {
       selectedAccount = best.account;
@@ -721,7 +723,8 @@ async function cmdResume(resumeArgs) {
       }
     }
 
-    const best = pickBestAccount(withUsage, undefined, { usePriority: true });
+    const hasPriorities = withUsage.some(a => a.priority != null);
+    const best = pickBestAccount(withUsage, undefined, { usePriority: hasPriorities });
 
     if (best) {
       selectedAccount = best.account;
@@ -795,7 +798,7 @@ async function cmdUse(useArgs) {
       process.exit(1);
     }
 
-    console.log(`export CLAUDE_CONFIG_DIR="${best.account.configDir}"`);
+    console.log(`export CLAUDE_CONFIG_DIR='${best.account.configDir}'`);
     console.error(`Switched to "${best.account.name}" (${best.reason})`);
     return;
   }
@@ -822,7 +825,7 @@ async function cmdUse(useArgs) {
       process.exit(1);
     }
 
-    console.log(`export CLAUDE_CONFIG_DIR="${best.account.configDir}"`);
+    console.log(`export CLAUDE_CONFIG_DIR='${best.account.configDir}'`);
     console.error(`Switched to "${best.account.name}" (${best.reason})`);
     return;
   }
@@ -843,7 +846,7 @@ async function cmdUse(useArgs) {
     console.error(`Warning: Account "${name}" is not authenticated. Run "claude-nonstop reauth" first.`);
   }
 
-  console.log(`export CLAUDE_CONFIG_DIR="${account.configDir}"`);
+  console.log(`export CLAUDE_CONFIG_DIR='${account.configDir}'`);
   console.error(`Switched to "${account.name}" (${account.configDir})`);
 }
 
