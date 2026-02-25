@@ -83,6 +83,14 @@ switch (command) {
     await cmdSetPriority(args.slice(1));
     break;
 
+  case 'swap':
+    await cmdSwap(args.slice(1));
+    break;
+
+  case 'active':
+    cmdActive();
+    break;
+
   case 'init':
     cmdInit(args[1]);
     break;
@@ -886,6 +894,132 @@ async function cmdSetPriority(priorityArgs) {
   }
 }
 
+// ─── Swap (hot-swap credentials for running sessions) ───────────────────────
+
+async function cmdSwap(swapArgs) {
+  const targetName = swapArgs[0];
+
+  if (!targetName) {
+    console.error('Usage: claude-nonstop swap <account>');
+    console.error('       claude-nonstop swap --restore');
+    console.error('');
+    console.error('Hot-swaps credentials into the currently active config directory.');
+    console.error('Running Claude Code sessions will pick up the new credentials');
+    console.error('on their next API call — no restart needed.');
+    console.error('');
+    console.error('Use --restore to put back the original credentials.');
+    console.error('');
+    console.error('Example: claude-nonstop swap main');
+    process.exit(1);
+  }
+
+  const activeConfigDir = process.env.CLAUDE_CONFIG_DIR || DEFAULT_CLAUDE_DIR;
+  const activeCredFile = join(activeConfigDir, '.credentials.json');
+  const backupCredFile = join(activeConfigDir, '.credentials.json.backup');
+
+  // --restore: put back the original credentials
+  if (targetName === '--restore') {
+    if (!existsSync(backupCredFile)) {
+      console.error('No backup found. Nothing to restore.');
+      process.exit(1);
+    }
+    const backupData = readFileSync(backupCredFile, 'utf-8');
+    const tmpFile = `${activeCredFile}.${process.pid}.${Date.now()}.tmp`;
+    writeFileSync(tmpFile, backupData, { mode: 0o600 });
+    renameSync(tmpFile, activeCredFile);
+    console.log('Restored original credentials from backup.');
+    console.log('Running sessions will use the original credentials on next API call.');
+    return;
+  }
+
+  const accounts = getAccounts();
+  const target = accounts.find(a => a.name === targetName);
+
+  if (!target) {
+    console.error(`Error: Account "${targetName}" not found.`);
+    console.error(`Available accounts: ${accounts.map(a => a.name).join(', ')}`);
+    process.exit(1);
+  }
+
+  const activeAccount = accounts.find(a => a.configDir === activeConfigDir);
+  const activeLabel = activeAccount ? activeAccount.name : 'unknown';
+
+  if (target.configDir === activeConfigDir) {
+    console.log(`Already using "${targetName}".`);
+    return;
+  }
+
+  // Read credentials from the target account
+  const targetCreds = readCredentials(target.configDir);
+  if (!targetCreds.token) {
+    console.error(`Error: Account "${targetName}" is not authenticated. Run "claude-nonstop reauth" first.`);
+    process.exit(1);
+  }
+
+  const targetCredFile = join(target.configDir, '.credentials.json');
+  if (!existsSync(targetCredFile)) {
+    console.error(`Error: Credentials file not found for "${targetName}".`);
+    process.exit(1);
+  }
+
+  // Back up current credentials (only if no backup exists — preserve the original)
+  if (existsSync(activeCredFile) && !existsSync(backupCredFile)) {
+    const currentData = readFileSync(activeCredFile, 'utf-8');
+    writeFileSync(backupCredFile, currentData, { mode: 0o600 });
+  }
+
+  // Write target credentials into the active config dir (atomic)
+  const credData = readFileSync(targetCredFile, 'utf-8');
+  const tmpFile = `${activeCredFile}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tmpFile, credData, { mode: 0o600 });
+  renameSync(tmpFile, activeCredFile);
+
+  console.log(`Swapped credentials: "${activeLabel}" → "${targetName}"`);
+  console.log(`Active config dir: ${activeConfigDir}`);
+  console.log('Running sessions will use the new credentials on next API call.');
+  console.log('');
+  console.log('To restore original: claude-nonstop swap --restore');
+}
+
+// ─── Active (detect which account is currently swapped in) ──────────────────
+
+function cmdActive() {
+  const activeConfigDir = process.env.CLAUDE_CONFIG_DIR || DEFAULT_CLAUDE_DIR;
+  const activeCredFile = join(activeConfigDir, '.credentials.json');
+
+  if (!existsSync(activeCredFile)) {
+    console.log('none');
+    return;
+  }
+
+  const activeCreds = readFileSync(activeCredFile, 'utf-8');
+  const accounts = getAccounts();
+
+  // Find which account's credentials match the active credentials.
+  // Skip the account whose configDir IS the active config dir (self-comparison always matches).
+  // If no other account matches, the active dir has its own original credentials.
+  const selfAccount = accounts.find(a => a.configDir === activeConfigDir);
+  const otherAccounts = accounts.filter(a => a.configDir !== activeConfigDir);
+
+  for (const account of otherAccounts) {
+    const accountCredFile = join(account.configDir, '.credentials.json');
+    if (!existsSync(accountCredFile)) continue;
+
+    const accountCreds = readFileSync(accountCredFile, 'utf-8');
+    if (activeCreds === accountCreds) {
+      console.log(account.name);
+      return;
+    }
+  }
+
+  // No other account matched — active dir has its original credentials
+  if (selfAccount) {
+    console.log(selfAccount.name);
+  } else {
+    console.log('unknown');
+  }
+}
+
 // ─── Init (shell integration) ───────────────────────────────────────────────
 
 function cmdInit(shell) {
@@ -1606,6 +1740,8 @@ Commands:
                          use --unset      Revert to default ~/.claude
                          use              Show current active account
   set-priority <name> <n>  Set account priority (1 = highest). Use "clear" to remove.
+  swap <name>          Hot-swap credentials into active session (no restart needed)
+  active               Show which account's credentials are currently active
   setup                Configure Slack remote access
   webhook              Webhook service management
   hooks                Hook management
