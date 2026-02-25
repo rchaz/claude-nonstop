@@ -11,6 +11,8 @@ import {
   removeAccount,
   ensureDefaultAccount,
   getAccounts,
+  setAccountPriority,
+  clearAccountPriority,
   DEFAULT_CLAUDE_DIR,
   CONFIG_DIR,
 } from '../../../lib/config.js';
@@ -241,5 +243,77 @@ describe('getAccounts', () => {
     const accounts = getAccounts();
     const config = loadConfig();
     assert.deepEqual(accounts, config.accounts);
+  });
+});
+
+describe('setAccountPriority / clearAccountPriority', () => {
+  const testName = `test-pri-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  let added = false;
+
+  beforeEach(() => {
+    addAccount(testName);
+    added = true;
+  });
+
+  afterEach(() => {
+    if (added) {
+      try { removeAccount(testName); } catch { /* already removed */ }
+      added = false;
+    }
+  });
+
+  it('sets priority on an account', () => {
+    setAccountPriority(testName, 1);
+    const config = loadConfig();
+    const account = config.accounts.find(a => a.name === testName);
+    assert.equal(account.priority, 1);
+  });
+
+  it('overwrites existing priority', () => {
+    setAccountPriority(testName, 1);
+    setAccountPriority(testName, 5);
+    const config = loadConfig();
+    const account = config.accounts.find(a => a.name === testName);
+    assert.equal(account.priority, 5);
+  });
+
+  it('clears priority from an account', () => {
+    setAccountPriority(testName, 1);
+    clearAccountPriority(testName);
+    const config = loadConfig();
+    const account = config.accounts.find(a => a.name === testName);
+    assert.equal(account.priority, undefined);
+  });
+
+  it('rejects non-integer priority', () => {
+    assert.throws(() => setAccountPriority(testName, 1.5), /positive integer/);
+  });
+
+  it('rejects zero priority', () => {
+    assert.throws(() => setAccountPriority(testName, 0), /positive integer/);
+  });
+
+  it('rejects negative priority', () => {
+    assert.throws(() => setAccountPriority(testName, -1), /positive integer/);
+  });
+
+  it('rejects string priority', () => {
+    assert.throws(() => setAccountPriority(testName, 'high'), /positive integer/);
+  });
+
+  it('throws for nonexistent account (set)', () => {
+    assert.throws(() => setAccountPriority('nonexistent-xyz-999', 1), /not found/);
+  });
+
+  it('throws for nonexistent account (clear)', () => {
+    assert.throws(() => clearAccountPriority('nonexistent-xyz-999'), /not found/);
+  });
+
+  it('clearAccountPriority is idempotent', () => {
+    // Account has no priority initially — clearing should still work
+    clearAccountPriority(testName);
+    const config = loadConfig();
+    const account = config.accounts.find(a => a.name === testName);
+    assert.equal(account.priority, undefined);
   });
 });
