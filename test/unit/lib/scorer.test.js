@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { pickBestAccount, pickByPriority, shouldRevertToPriority, PRIORITY_THRESHOLD } from '../../../lib/scorer.js';
+import { pickBestAccount, pickByPriority, shouldRevertToPriority, PRIORITY_THRESHOLD, REVERSION_THRESHOLD } from '../../../lib/scorer.js';
 
 const makeAccount = (name, sessionPercent, weeklyPercent, opts = {}) => ({
   name,
@@ -257,7 +257,7 @@ describe('shouldRevertToPriority', () => {
   it('returns shouldRevert=true when a higher-priority account has recovered', () => {
     const current = { name: 'backup', priority: 2 };
     const accounts = [
-      makeAccount('main', 50, 50, { priority: 1 }),    // recovered (< 98%)
+      makeAccount('main', 40, 40, { priority: 1 }),    // recovered (< 50%)
       makeAccount('backup', 30, 30, { priority: 2 }),
     ];
     const result = shouldRevertToPriority(current, accounts);
@@ -269,7 +269,7 @@ describe('shouldRevertToPriority', () => {
   it('returns shouldRevert=false when current account has no priority', () => {
     const current = { name: 'nopri' };
     const accounts = [
-      makeAccount('main', 50, 50, { priority: 1 }),
+      makeAccount('main', 20, 20, { priority: 1 }),
       makeAccount('nopri', 30, 30),
     ];
     const result = shouldRevertToPriority(current, accounts);
@@ -280,7 +280,7 @@ describe('shouldRevertToPriority', () => {
   it('returns shouldRevert=false when current account is already priority 1', () => {
     const current = { name: 'main', priority: 1 };
     const accounts = [
-      makeAccount('main', 50, 50, { priority: 1 }),
+      makeAccount('main', 20, 20, { priority: 1 }),
       makeAccount('backup', 10, 10, { priority: 2 }),
     ];
     const result = shouldRevertToPriority(current, accounts);
@@ -288,10 +288,10 @@ describe('shouldRevertToPriority', () => {
     assert.equal(result.reason, 'already optimal');
   });
 
-  it('returns shouldRevert=false when higher-priority account is still exhausted', () => {
+  it('returns shouldRevert=false when higher-priority account is still above reversion threshold', () => {
     const current = { name: 'backup', priority: 2 };
     const accounts = [
-      makeAccount('main', PRIORITY_THRESHOLD, PRIORITY_THRESHOLD, { priority: 1 }),
+      makeAccount('main', REVERSION_THRESHOLD, REVERSION_THRESHOLD, { priority: 1 }),
       makeAccount('backup', 30, 30, { priority: 2 }),
     ];
     const result = shouldRevertToPriority(current, accounts);
@@ -322,7 +322,7 @@ describe('shouldRevertToPriority', () => {
   it('picks the best among multiple higher-priority candidates', () => {
     const current = { name: 'backup3', priority: 3 };
     const accounts = [
-      makeAccount('main', 50, 50, { priority: 1 }),     // recovered
+      makeAccount('main', 40, 40, { priority: 1 }),     // recovered (< 50%)
       makeAccount('backup2', 30, 30, { priority: 2 }),   // also recovered, but lower priority
       makeAccount('backup3', 20, 20, { priority: 3 }),
     ];
@@ -342,10 +342,10 @@ describe('shouldRevertToPriority', () => {
     assert.equal(result.shouldRevert, false);
   });
 
-  it('handles boundary: account at exactly PRIORITY_THRESHOLD - 1 triggers reversion', () => {
+  it('handles boundary: account at exactly REVERSION_THRESHOLD - 1 triggers reversion', () => {
     const current = { name: 'backup', priority: 2 };
     const accounts = [
-      makeAccount('main', PRIORITY_THRESHOLD - 1, 0, { priority: 1 }),
+      makeAccount('main', REVERSION_THRESHOLD - 1, 0, { priority: 1 }),
       makeAccount('backup', 30, 30, { priority: 2 }),
     ];
     const result = shouldRevertToPriority(current, accounts);
