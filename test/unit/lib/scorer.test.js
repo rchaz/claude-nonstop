@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { pickBestAccount, pickByPriority, PRIORITY_THRESHOLD } from '../../../lib/scorer.js';
+import { pickBestAccount, pickByPriority, shouldRevertToPriority, PRIORITY_THRESHOLD } from '../../../lib/scorer.js';
 
 const makeAccount = (name, sessionPercent, weeklyPercent, opts = {}) => ({
   name,
@@ -250,5 +250,138 @@ describe('pickByPriority', () => {
 describe('PRIORITY_THRESHOLD', () => {
   it('is 98', () => {
     assert.equal(PRIORITY_THRESHOLD, 98);
+  });
+});
+
+describe('shouldRevertToPriority', () => {
+  it('returns shouldRevert=true when a higher-priority account has recovered', () => {
+    const current = { name: 'backup', priority: 2 };
+    const accounts = [
+      makeAccount('main', 50, 50, { priority: 1 }),    // recovered (< 98%)
+      makeAccount('backup', 30, 30, { priority: 2 }),
+    ];
+    const result = shouldRevertToPriority(current, accounts);
+    assert.equal(result.shouldRevert, true);
+    assert.equal(result.betterAccount.name, 'main');
+    assert.ok(result.reason.includes('recovered'));
+  });
+
+  it('returns shouldRevert=false when current account has no priority', () => {
+    const current = { name: 'nopri' };
+    const accounts = [
+      makeAccount('main', 50, 50, { priority: 1 }),
+      makeAccount('nopri', 30, 30),
+    ];
+    const result = shouldRevertToPriority(current, accounts);
+    assert.equal(result.shouldRevert, false);
+    assert.equal(result.reason, 'already optimal');
+  });
+
+  it('returns shouldRevert=false when current account is already priority 1', () => {
+    const current = { name: 'main', priority: 1 };
+    const accounts = [
+      makeAccount('main', 50, 50, { priority: 1 }),
+      makeAccount('backup', 10, 10, { priority: 2 }),
+    ];
+    const result = shouldRevertToPriority(current, accounts);
+    assert.equal(result.shouldRevert, false);
+    assert.equal(result.reason, 'already optimal');
+  });
+
+  it('returns shouldRevert=false when higher-priority account is still exhausted', () => {
+    const current = { name: 'backup', priority: 2 };
+    const accounts = [
+      makeAccount('main', PRIORITY_THRESHOLD, PRIORITY_THRESHOLD, { priority: 1 }),
+      makeAccount('backup', 30, 30, { priority: 2 }),
+    ];
+    const result = shouldRevertToPriority(current, accounts);
+    assert.equal(result.shouldRevert, false);
+    assert.equal(result.reason, 'no higher-priority account available');
+  });
+
+  it('returns shouldRevert=false when higher-priority account has an error', () => {
+    const current = { name: 'backup', priority: 2 };
+    const accounts = [
+      makeAccount('main', 0, 0, { priority: 1, error: 'HTTP 401' }),
+      makeAccount('backup', 30, 30, { priority: 2 }),
+    ];
+    const result = shouldRevertToPriority(current, accounts);
+    assert.equal(result.shouldRevert, false);
+  });
+
+  it('returns shouldRevert=false when higher-priority account has no token', () => {
+    const current = { name: 'backup', priority: 2 };
+    const accounts = [
+      makeAccount('main', 0, 0, { priority: 1, token: null }),
+      makeAccount('backup', 30, 30, { priority: 2 }),
+    ];
+    const result = shouldRevertToPriority(current, accounts);
+    assert.equal(result.shouldRevert, false);
+  });
+
+  it('picks the best among multiple higher-priority candidates', () => {
+    const current = { name: 'backup3', priority: 3 };
+    const accounts = [
+      makeAccount('main', 50, 50, { priority: 1 }),     // recovered
+      makeAccount('backup2', 30, 30, { priority: 2 }),   // also recovered, but lower priority
+      makeAccount('backup3', 20, 20, { priority: 3 }),
+    ];
+    const result = shouldRevertToPriority(current, accounts);
+    assert.equal(result.shouldRevert, true);
+    assert.equal(result.betterAccount.name, 'main');
+  });
+
+  it('ignores accounts with same or worse priority', () => {
+    const current = { name: 'backup2', priority: 2 };
+    const accounts = [
+      makeAccount('backup2', 30, 30, { priority: 2 }),
+      makeAccount('backup3', 10, 10, { priority: 3 }),
+      makeAccount('backup4', 5, 5, { priority: 4 }),
+    ];
+    const result = shouldRevertToPriority(current, accounts);
+    assert.equal(result.shouldRevert, false);
+  });
+
+  it('handles boundary: account at exactly PRIORITY_THRESHOLD - 1 triggers reversion', () => {
+    const current = { name: 'backup', priority: 2 };
+    const accounts = [
+      makeAccount('main', PRIORITY_THRESHOLD - 1, 0, { priority: 1 }),
+      makeAccount('backup', 30, 30, { priority: 2 }),
+    ];
+    const result = shouldRevertToPriority(current, accounts);
+    assert.equal(result.shouldRevert, true);
+  });
+
+  it('handles accounts without priority as not-better candidates', () => {
+    const current = { name: 'backup', priority: 2 };
+    const accounts = [
+      makeAccount('nopri', 10, 10),                      // no priority = Infinity
+      makeAccount('backup', 30, 30, { priority: 2 }),
+    ];
+    const result = shouldRevertToPriority(current, accounts);
+    assert.equal(result.shouldRevert, false);
+  });
+
+  it('includes usage percentages in reason string', () => {
+    const current = { name: 'backup', priority: 2 };
+    const accounts = [
+      makeAccount('main', 25, 30, { priority: 1 }),
+      makeAccount('backup', 50, 50, { priority: 2 }),
+    ];
+    const result = shouldRevertToPriority(current, accounts);
+    assert.ok(result.reason.includes('25%'));
+    assert.ok(result.reason.includes('30%'));
+  });
+
+  it('selects lowest utilization among same-priority candidates', () => {
+    const current = { name: 'backup', priority: 3 };
+    const accounts = [
+      makeAccount('main-a', 60, 60, { priority: 1 }),
+      makeAccount('main-b', 20, 20, { priority: 1 }),
+      makeAccount('backup', 10, 10, { priority: 3 }),
+    ];
+    const result = shouldRevertToPriority(current, accounts);
+    assert.equal(result.shouldRevert, true);
+    assert.equal(result.betterAccount.name, 'main-b');
   });
 });

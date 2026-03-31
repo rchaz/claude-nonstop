@@ -474,6 +474,13 @@ async function cmdRun(claudeArgs) {
     claudeArgs.splice(remoteAccessIdx, 1);
   }
 
+  // Extract --priority-revert flag (consume it, don't pass to claude)
+  const priorityRevertIdx = claudeArgs.indexOf('--priority-revert');
+  const priorityRevert = priorityRevertIdx !== -1;
+  if (priorityRevert) {
+    claudeArgs.splice(priorityRevertIdx, 1);
+  }
+
   // Extract --account / -a flag (consume it, don't pass to claude)
   const requestedAccount = extractAccountFlag(claudeArgs);
 
@@ -596,7 +603,7 @@ async function cmdRun(claudeArgs) {
   }
 
   // Run with auto-switching
-  await run(claudeArgs, selectedAccount, accounts, { remoteAccess });
+  await run(claudeArgs, selectedAccount, accounts, { remoteAccess, priorityRevert });
 }
 
 async function cmdResume(resumeArgs) {
@@ -605,6 +612,13 @@ async function cmdResume(resumeArgs) {
   const remoteAccess = remoteAccessIdx !== -1;
   if (remoteAccess) {
     resumeArgs.splice(remoteAccessIdx, 1);
+  }
+
+  // Extract --priority-revert flag (consume it, don't pass to claude)
+  const priorityRevertIdx = resumeArgs.indexOf('--priority-revert');
+  const priorityRevert = priorityRevertIdx !== -1;
+  if (priorityRevert) {
+    resumeArgs.splice(priorityRevertIdx, 1);
   }
 
   // Extract --account / -a flag (consume it, don't pass to claude)
@@ -746,7 +760,7 @@ async function cmdResume(resumeArgs) {
     }
   }
 
-  await run(claudeArgs, selectedAccount, accounts, { remoteAccess });
+  await run(claudeArgs, selectedAccount, accounts, { remoteAccess, priorityRevert });
 }
 
 // ─── Use & Priority Commands ────────────────────────────────────────────────
@@ -1615,6 +1629,7 @@ Commands:
 Options:
   -a, --account <name>    Use a specific account
   --remote-access         Run in tmux with Slack channels
+  --priority-revert       Auto-revert to higher-priority account when it recovers
 
 All other arguments are passed through to \`claude\`.
 Run \`setup --help\`, \`webhook\`, or \`hooks\` for subcommand details.
