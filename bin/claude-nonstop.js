@@ -477,6 +477,9 @@ async function cmdRun(claudeArgs) {
   // Extract --account / -a flag (consume it, don't pass to claude)
   const requestedAccount = extractAccountFlag(claudeArgs);
 
+  // Extract --prefer / --prefer-threshold flags (consume, don't pass to claude)
+  const { preferredAccount: preferName, preferThreshold } = extractPreferFlags(claudeArgs);
+
   // Handle tmux bootstrapping for remote access
   if (remoteAccess) {
     const { isInsideTmux, generateSessionName, reexecInTmux } = await import('../lib/tmux.js');
@@ -595,8 +598,22 @@ async function cmdRun(claudeArgs) {
     }
   }
 
+  // Validate preferred account if specified
+  if (preferName) {
+    const prefAccount = authenticated.find(a => a.name === preferName);
+    if (!prefAccount) {
+      console.error(`Error: Preferred account "${preferName}" not found or not authenticated.`);
+      console.error(`Authenticated accounts: ${authenticated.map(a => a.name).join(', ')}`);
+      process.exit(1);
+    }
+    console.error(`[claude-nonstop] Preferred account: "${preferName}" (return when session ≤${preferThreshold ?? 30}%)`);
+  }
+
   // Run with auto-switching
-  await run(claudeArgs, selectedAccount, accounts, { remoteAccess });
+  const runOptions = { remoteAccess };
+  if (preferName) runOptions.preferredAccount = preferName;
+  if (preferThreshold != null) runOptions.preferThreshold = preferThreshold;
+  await run(claudeArgs, selectedAccount, accounts, runOptions);
 }
 
 async function cmdResume(resumeArgs) {
@@ -609,6 +626,9 @@ async function cmdResume(resumeArgs) {
 
   // Extract --account / -a flag (consume it, don't pass to claude)
   const requestedAccount = extractAccountFlag(resumeArgs);
+
+  // Extract --prefer / --prefer-threshold flags (consume, don't pass to claude)
+  const { preferredAccount: preferName, preferThreshold } = extractPreferFlags(resumeArgs);
 
   // Handle tmux bootstrapping for remote access
   if (remoteAccess) {
@@ -746,7 +766,21 @@ async function cmdResume(resumeArgs) {
     }
   }
 
-  await run(claudeArgs, selectedAccount, accounts, { remoteAccess });
+  // Validate preferred account if specified
+  if (preferName) {
+    const prefAccount = authenticated.find(a => a.name === preferName);
+    if (!prefAccount) {
+      console.error(`Error: Preferred account "${preferName}" not found or not authenticated.`);
+      console.error(`Authenticated accounts: ${authenticated.map(a => a.name).join(', ')}`);
+      process.exit(1);
+    }
+    console.error(`[claude-nonstop] Preferred account: "${preferName}" (return when session ≤${preferThreshold ?? 30}%)`);
+  }
+
+  const runOptions = { remoteAccess };
+  if (preferName) runOptions.preferredAccount = preferName;
+  if (preferThreshold != null) runOptions.preferThreshold = preferThreshold;
+  await run(claudeArgs, selectedAccount, accounts, runOptions);
 }
 
 // ─── Use & Priority Commands ────────────────────────────────────────────────
@@ -1580,6 +1614,44 @@ function extractAccountFlag(args) {
   return null;
 }
 
+/**
+ * Extract --prefer and --prefer-threshold flags from args (consumed, not passed to claude).
+ *
+ * @param {string[]} args - Mutated in place to remove consumed flags
+ * @returns {{ preferredAccount: string|null, preferThreshold: number|null }}
+ */
+function extractPreferFlags(args) {
+  let preferredAccount = null;
+  let preferThreshold = null;
+
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--prefer') {
+      if (i + 1 >= args.length || args[i + 1].startsWith('-')) {
+        console.error('Error: --prefer requires an account name.');
+        process.exit(1);
+      }
+      preferredAccount = args[i + 1];
+      args.splice(i, 2);
+      i--;
+    } else if (args[i] === '--prefer-threshold') {
+      if (i + 1 >= args.length || args[i + 1].startsWith('-')) {
+        console.error('Error: --prefer-threshold requires a number (1-99).');
+        process.exit(1);
+      }
+      const val = parseInt(args[i + 1], 10);
+      if (isNaN(val) || val < 1 || val > 99) {
+        console.error('Error: --prefer-threshold must be a number between 1 and 99.');
+        process.exit(1);
+      }
+      preferThreshold = val;
+      args.splice(i, 2);
+      i--;
+    }
+  }
+
+  return { preferredAccount, preferThreshold };
+}
+
 function printHelp() {
   console.log(`
 claude-nonstop — Multi-account switching + Slack remote access for Claude Code
@@ -1613,8 +1685,10 @@ Commands:
   uninstall            Remove claude-nonstop completely
 
 Options:
-  -a, --account <name>    Use a specific account
-  --remote-access         Run in tmux with Slack channels
+  -a, --account <name>          Use a specific account
+  --remote-access               Run in tmux with Slack channels
+  --prefer <name>               Return to this account when its session usage recovers
+  --prefer-threshold <1-99>     Session % threshold for return (default: 30)
 
 All other arguments are passed through to \`claude\`.
 Run \`setup --help\`, \`webhook\`, or \`hooks\` for subcommand details.
