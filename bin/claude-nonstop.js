@@ -541,6 +541,16 @@ async function cmdRun(claudeArgs) {
     process.exit(1);
   }
 
+  // Validate preferred account early — before any usage of preferName
+  if (preferName) {
+    const prefAccount = authenticated.find(a => a.name === preferName);
+    if (!prefAccount) {
+      console.error(`Error: Preferred account "${preferName}" not found or not authenticated.`);
+      console.error(`Authenticated accounts: ${authenticated.map(a => a.name).join(', ')}`);
+      process.exit(1);
+    }
+  }
+
   // Check usage and pick best account
   let selectedAccount;
 
@@ -613,14 +623,7 @@ async function cmdRun(claudeArgs) {
     }
   }
 
-  // Validate preferred account if specified
   if (preferName) {
-    const prefAccount = authenticated.find(a => a.name === preferName);
-    if (!prefAccount) {
-      console.error(`Error: Preferred account "${preferName}" not found or not authenticated.`);
-      console.error(`Authenticated accounts: ${authenticated.map(a => a.name).join(', ')}`);
-      process.exit(1);
-    }
     console.error(`[claude-nonstop] Preferred account: "${preferName}" (return when session ≤${preferThreshold ?? 30}%)`);
   }
 
@@ -720,6 +723,16 @@ async function cmdResume(resumeArgs) {
     process.exit(1);
   }
 
+  // Validate preferred account early — before any usage of preferName
+  if (preferName) {
+    const prefAccount = authenticated.find(a => a.name === preferName);
+    if (!prefAccount) {
+      console.error(`Error: Preferred account "${preferName}" not found or not authenticated.`);
+      console.error(`Authenticated accounts: ${authenticated.map(a => a.name).join(', ')}`);
+      process.exit(1);
+    }
+  }
+
   // Pick best account
   let selectedAccount;
 
@@ -781,14 +794,7 @@ async function cmdResume(resumeArgs) {
     }
   }
 
-  // Validate preferred account if specified
   if (preferName) {
-    const prefAccount = authenticated.find(a => a.name === preferName);
-    if (!prefAccount) {
-      console.error(`Error: Preferred account "${preferName}" not found or not authenticated.`);
-      console.error(`Authenticated accounts: ${authenticated.map(a => a.name).join(', ')}`);
-      process.exit(1);
-    }
     console.error(`[claude-nonstop] Preferred account: "${preferName}" (return when session ≤${preferThreshold ?? 30}%)`);
   }
 
@@ -1646,6 +1652,7 @@ function extractPreferFlags(args) {
         process.exit(1);
       }
       preferredAccount = args[i + 1];
+      validateAccountName(preferredAccount);
       args.splice(i, 2);
       i--;
     } else if (args[i] === '--prefer-threshold') {
