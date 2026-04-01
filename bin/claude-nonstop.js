@@ -15,7 +15,7 @@ import { addAccount, removeAccount, getAccounts, ensureDefaultAccount, validateA
 import { readCredentials, isTokenExpired, deleteKeychainEntry } from '../lib/keychain.js';
 import { checkAllUsage, checkUsage, fetchProfile } from '../lib/usage.js';
 import { pickBestAccount, pickByPriority } from '../lib/scorer.js';
-import { run } from '../lib/runner.js';
+import { run, PREFER_THRESHOLD_DEFAULT } from '../lib/runner.js';
 import { reauthAccount, reauthExpiredAccounts, silentRefresh } from '../lib/reauth.js';
 import { isMacOS } from '../lib/platform.js';
 import { installService, uninstallService, restartService, getServiceStatus, isServiceInstalled, LOG_PATH } from '../lib/service.js';
@@ -584,17 +584,32 @@ async function cmdRun(claudeArgs) {
       }
     }
 
-    // Only use priority sorting when at least one account has a priority set
-    const hasPriorities = withUsage.some(a => a.priority != null);
-    const best = pickBestAccount(withUsage, undefined, { usePriority: hasPriorities });
+    // Prefer the --prefer account if its session usage is within threshold
+    const prefThresh = preferThreshold ?? PREFER_THRESHOLD_DEFAULT;
+    if (preferName) {
+      const prefUsage = withUsage.find(a => a.name === preferName);
+      if (prefUsage && !prefUsage.usage?.error) {
+        const sessionUtil = prefUsage.usage?.sessionPercent || 0;
+        if (sessionUtil <= prefThresh) {
+          selectedAccount = prefUsage;
+          console.error(`[claude-nonstop] Selected preferred account "${preferName}" (session: ${sessionUtil}%)`);
+        }
+      }
+    }
 
-    if (best) {
-      selectedAccount = best.account;
-      console.error(`[claude-nonstop] Selected "${selectedAccount.name}" (${best.reason})`);
-    } else {
-      // Fallback to first authenticated account
-      selectedAccount = authenticated[0];
-      console.error(`[claude-nonstop] Defaulting to "${selectedAccount.name}"`);
+    if (!selectedAccount) {
+      // Only use priority sorting when at least one account has a priority set
+      const hasPriorities = withUsage.some(a => a.priority != null);
+      const best = pickBestAccount(withUsage, undefined, { usePriority: hasPriorities });
+
+      if (best) {
+        selectedAccount = best.account;
+        console.error(`[claude-nonstop] Selected "${selectedAccount.name}" (${best.reason})`);
+      } else {
+        // Fallback to first authenticated account
+        selectedAccount = authenticated[0];
+        console.error(`[claude-nonstop] Defaulting to "${selectedAccount.name}"`);
+      }
     }
   }
 
