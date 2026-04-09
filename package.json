@@ -49,7 +49,7 @@
     "anthropic"
   ],
   "dependencies": {
-    "@slack/bolt": "^4.3.0",
+    "@slack/bolt": "^4.7.0",
     "@slack/web-api": "^7.9.1",
     "node-pty": "^1.2.0-beta.11"
   }
