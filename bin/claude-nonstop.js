@@ -87,6 +87,10 @@ switch (command) {
     cmdInit(args[1]);
     break;
 
+  case 'swap':
+    await cmdSwap(args.slice(1));
+    break;
+
   case 'help':
   case '--help':
   case '-h':
@@ -850,6 +854,140 @@ async function cmdUse(useArgs) {
   console.error(`Switched to "${account.name}" (${account.configDir})`);
 }
 
+/**
+ * cmdSwap — ergonomic mid-session account swap.
+ *
+ * Pain point: a running Claude Code process loads its OAuth credentials at
+ * startup and cannot change them mid-session. To "hot swap" accounts the
+ * user must (a) exit the current session, (b) `use <target>` in shell to
+ * change CLAUDE_CONFIG_DIR, and (c) `resume <session-id> --account=<target>`
+ * to migrate the session metadata into the new profile and restart claude.
+ *
+ * `swap <target>` is a thin precursor that does the validation up front and
+ * prints the exact resume command to paste after exit. Catches typos /
+ * missing creds / wrong account names BEFORE the user kills their session.
+ *
+ *   claude-nonstop swap fourth                 → auto-detect session in cwd
+ *   claude-nonstop swap fourth --session=<id>  → explicit session id
+ *   claude-nonstop swap fourth --quiet         → print only the resume cmd
+ *
+ * Returns 0 if validation succeeds, non-zero otherwise. The user remains in
+ * full control of when to exit the active claude session.
+ */
+async function cmdSwap(swapArgs) {
+  const target = swapArgs[0];
+  if (!target || target.startsWith('-')) {
+    console.error('Usage: claude-nonstop swap <target-account> [--session=<id>] [--quiet]');
+    console.error('       Auto-detects most recent session in current cwd if --session omitted.');
+    process.exit(1);
+  }
+
+  // --quiet — only print the resume one-liner (script-friendly)
+  let quiet = false;
+  const quietIdx = swapArgs.indexOf('--quiet');
+  if (quietIdx !== -1) {
+    quiet = true;
+    swapArgs.splice(quietIdx, 1);
+  }
+
+  // --session=<id> — explicit session id (otherwise auto-detect)
+  let explicitSessionId = null;
+  for (let i = 1; i < swapArgs.length; i++) {
+    if (swapArgs[i] === '--session' || swapArgs[i] === '-s') {
+      explicitSessionId = swapArgs[i + 1];
+      i++;
+      continue;
+    }
+    if (swapArgs[i].startsWith('--session=')) {
+      explicitSessionId = swapArgs[i].slice('--session='.length);
+      continue;
+    }
+  }
+
+  const log = (msg) => { if (!quiet) console.error(msg); };
+
+  // 1. Validate target account exists + has token
+  const accounts = getAccounts();
+  const targetAccount = accounts.find(a => a.name === target);
+  if (!targetAccount) {
+    console.error(`Error: Account "${target}" not found.`);
+    console.error(`Available accounts: ${accounts.map(a => a.name).join(', ')}`);
+    process.exit(1);
+  }
+
+  const creds = readCredentials(targetAccount.configDir);
+  if (!creds.token) {
+    console.error(`Error: Account "${target}" not authenticated. Run "claude-nonstop reauth" first.`);
+    process.exit(1);
+  }
+
+  log(`[claude-nonstop] Validating target account "${target}"...`);
+  log(`  ✓ Authenticated${formatUserInfo({ name: creds.name, email: creds.email })}`);
+
+  // 2. Quota preview (best-effort — non-fatal on failure)
+  try {
+    const usage = await checkAllUsage([{ ...targetAccount, token: creds.token }]);
+    const u = usage[0]?.usage;
+    if (u && !u.error) {
+      const fiveHr = Math.round(u.sessionPercent ?? 0);
+      const sevenDay = Math.round(u.weeklyPercent ?? 0);
+      log(`  ✓ Quota: 5h ${fiveHr}% / 7d ${sevenDay}%`);
+      if (sevenDay >= 95) {
+        log(`  ⚠ Warning: target 7-day quota at ${sevenDay}% — swap may exhaust shortly.`);
+      }
+    }
+  } catch {
+    // ignore — quota check is informational only
+  }
+
+  // 3. Locate session id
+  let sessionId = explicitSessionId;
+  let sourceAccount = null;
+  if (!sessionId) {
+    const { findLatestSessionAcrossProfiles } = await import('../lib/session.js');
+    const found = findLatestSessionAcrossProfiles(accounts, process.cwd());
+    if (!found) {
+      console.error(`Error: No sessions found for ${process.cwd()} in any profile.`);
+      console.error('Either run --session=<id> explicitly, or start a Claude session in this directory first.');
+      process.exit(1);
+    }
+    sessionId = found.sessionId;
+    sourceAccount = found.account;
+    log(`[claude-nonstop] Auto-detected session in ${process.cwd()}:`);
+    log(`  Session ID: ${sessionId}`);
+    log(`  Source profile: ${sourceAccount.name}`);
+  } else {
+    const { findSessionAcrossProfiles } = await import('../lib/session.js');
+    const found = findSessionAcrossProfiles(accounts, sessionId);
+    if (!found) {
+      console.error(`Error: Session "${sessionId}" not found in any account.`);
+      process.exit(1);
+    }
+    sourceAccount = found.account;
+    log(`[claude-nonstop] Located session ${sessionId} in profile "${sourceAccount.name}"`);
+  }
+
+  if (sourceAccount && sourceAccount.name === target) {
+    log(`[claude-nonstop] Note: session is already in "${target}" — nothing to migrate.`);
+  }
+
+  // 4. Print the exact resume command
+  const resumeCmd = `claude-nonstop resume ${sessionId} --account=${target}`;
+  if (quiet) {
+    console.log(resumeCmd);
+  } else {
+    log('');
+    log(`[claude-nonstop] Ready to swap. To complete:`);
+    log(`  1. Exit the current Claude session (Ctrl+D or /exit).`);
+    log(`  2. Run this 1-liner — session migrates to "${target}" and resumes:`);
+    log('');
+    console.log(resumeCmd);
+    log('');
+    log(`[claude-nonstop] Tip: pipe to clipboard with`);
+    log(`  claude-nonstop swap ${target} --quiet | pbcopy`);
+  }
+}
+
 async function cmdSetPriority(priorityArgs) {
   const name = priorityArgs[0];
   const priorityStr = priorityArgs[1];
@@ -1605,6 +1743,11 @@ Commands:
                          use --priority   Highest priority under 98% usage
                          use --unset      Revert to default ~/.claude
                          use              Show current active account
+  swap <target>        Mid-session account swap precursor — validates target +
+                         auto-detects session id + prints exact resume command
+                         to paste after exiting the current Claude session.
+                         Catches typos / missing creds BEFORE the user exits.
+                         Flags: --session=<id> (override auto-detect) · --quiet (prints only resume cmd)
   set-priority <name> <n>  Set account priority (1 = highest). Use "clear" to remove.
   setup                Configure Slack remote access
   webhook              Webhook service management

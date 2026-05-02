@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- **`swap <target>` command** — ergonomic mid-session account swap precursor.
+  A running Claude Code process loads OAuth credentials at startup and cannot
+  swap them in-place; the proper procedure is exit → `use <target>` →
+  `resume <id> --account=<target>`. `swap` does the validation up front
+  (target exists, has token, quota previewed) and auto-detects the current
+  session id for the cwd, then prints the exact `resume` 1-liner to paste
+  after exit. Catches typos / missing creds BEFORE the user kills their
+  active session.
+  - `--session=<id>` to override session auto-detection
+  - `--quiet` to print only the resume command (script-friendly, e.g. `swap fourth --quiet | pbcopy`)
+
 ## [0.2.0] - 2025-06-15
 
 ### Added

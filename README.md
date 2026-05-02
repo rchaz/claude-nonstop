@@ -50,6 +50,7 @@ On launch, claude-nonstop checks usage across all accounts and picks the one wit
 | `list` | List accounts with auth status |
 | `reauth` | Re-authenticate expired accounts |
 | `resume [id]` | Resume most recent session, or a specific one by ID |
+| `swap <target>` | Mid-session account swap precursor — validates target + auto-detects session id + prints exact `resume` 1-liner to paste after exit. `--session=<id>` override · `--quiet` script mode (e.g. `swap fourth --quiet \| pbcopy`) |
 
 **Slack remote access:**
 
