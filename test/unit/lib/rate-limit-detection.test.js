@@ -1,6 +1,18 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { RATE_LIMIT_PATTERN, stripAnsi, findEarliestReset, formatDuration, sleep, EXHAUSTION_THRESHOLD, MAX_SLEEP_MS } from '../../../lib/runner.js';
+import {
+  RATE_LIMIT_PATTERN,
+  ADMIN_DISABLED_PATTERN,
+  stripAnsi,
+  findEarliestReset,
+  formatDuration,
+  sleep,
+  EXHAUSTION_THRESHOLD,
+  MAX_SLEEP_MS,
+  ADMIN_DISABLE_VERIFY_THRESHOLD,
+  MAX_CONSECUTIVE_ADMIN_FALSE_POSITIVES,
+  createRateLimitDetector,
+} from '../../../lib/runner.js';
 import { effectiveUtilization } from '../../../lib/scorer.js';
 
 describe('RATE_LIMIT_PATTERN', () => {
@@ -415,5 +427,236 @@ describe('EXHAUSTION_THRESHOLD and MAX_SLEEP_MS constants', () => {
     // Over the cap
     assert.equal(clamp(12 * 60 * 60 * 1000), MAX_SLEEP_MS); // 12h clamped to 6h
     assert.equal(clamp(24 * 60 * 60 * 1000), MAX_SLEEP_MS); // 24h clamped to 6h
+  });
+});
+
+describe('ADMIN_DISABLED_PATTERN', () => {
+  it('matches the canonical message', () => {
+    assert.ok(ADMIN_DISABLED_PATTERN.test(
+      'Your usage allocation has been disabled by your admin'
+    ));
+  });
+
+  it('matches case-insensitively', () => {
+    assert.ok(ADMIN_DISABLED_PATTERN.test(
+      'YOUR USAGE ALLOCATION HAS BEEN DISABLED BY YOUR ADMIN'
+    ));
+  });
+
+  it('matches when embedded in surrounding output', () => {
+    const input = [
+      '* Sautéed for 0s',
+      '└ Your usage allocation has been disabled by your admin',
+      '  /extra-usage to request more usage from your admin.',
+    ].join('\n');
+    assert.ok(ADMIN_DISABLED_PATTERN.test(input));
+  });
+
+  it('does not match unrelated text', () => {
+    assert.ok(!ADMIN_DISABLED_PATTERN.test('Limit reached · resets in 2h'));
+    assert.ok(!ADMIN_DISABLED_PATTERN.test('Working on task...'));
+  });
+});
+
+describe('createRateLimitDetector — kind discrimination', () => {
+  function openGate(detector) {
+    // Force the gate open via the timeout path so tests don't need to
+    // synthesize the full prompt-marker string.
+    detector.fireTimeout();
+  }
+
+  it('returns kind="rate-limit" on RATE_LIMIT_PATTERN match', () => {
+    const d = createRateLimitDetector();
+    openGate(d);
+    const result = d.feed('Limit reached · resets in 2h 30m\n');
+    assert.ok(result, 'should detect');
+    assert.equal(result.kind, 'rate-limit');
+    assert.equal(result.resetTime, 'in 2h 30m');
+  });
+
+  it('returns kind="admin-disabled" on ADMIN_DISABLED_PATTERN match', () => {
+    const d = createRateLimitDetector();
+    openGate(d);
+    const result = d.feed('Your usage allocation has been disabled by your admin\n');
+    assert.ok(result, 'should detect');
+    assert.equal(result.kind, 'admin-disabled');
+    assert.equal(result.resetTime, null);
+  });
+
+  it('prefers kind="rate-limit" when both patterns are present', () => {
+    const d = createRateLimitDetector();
+    openGate(d);
+    const result = d.feed([
+      'Your usage allocation has been disabled by your admin',
+      'Limit reached · resets in 1h',
+    ].join('\n'));
+    assert.ok(result);
+    assert.equal(result.kind, 'rate-limit');
+    assert.equal(result.resetTime, 'in 1h');
+  });
+
+  it('returns null before the gate opens', () => {
+    const d = createRateLimitDetector();
+    // Do NOT openGate — feed admin-disabled message; should be ignored
+    // because it could be replay residue from --resume.
+    const result = d.feed('Your usage allocation has been disabled by your admin\n');
+    assert.equal(result, null);
+  });
+
+  it('only fires once per detector instance', () => {
+    const d = createRateLimitDetector();
+    openGate(d);
+    const first = d.feed('Your usage allocation has been disabled by your admin\n');
+    assert.ok(first);
+    const second = d.feed('Limit reached · resets in 1h\n');
+    assert.equal(second, null, 'detector should not re-fire');
+  });
+});
+
+describe('Admin-disabled false-positive verification constants', () => {
+  it('ADMIN_DISABLE_VERIFY_THRESHOLD is a sane percentage', () => {
+    assert.equal(typeof ADMIN_DISABLE_VERIFY_THRESHOLD, 'number');
+    assert.ok(ADMIN_DISABLE_VERIFY_THRESHOLD > 0 && ADMIN_DISABLE_VERIFY_THRESHOLD <= 100);
+    // Must be strictly below the hard exhaustion threshold so that an account
+    // flagged "near-exhausted" by the picker is also flagged by this check.
+    assert.ok(ADMIN_DISABLE_VERIFY_THRESHOLD <= EXHAUSTION_THRESHOLD);
+  });
+
+  it('MAX_CONSECUTIVE_ADMIN_FALSE_POSITIVES is a small positive integer', () => {
+    assert.equal(typeof MAX_CONSECUTIVE_ADMIN_FALSE_POSITIVES, 'number');
+    assert.ok(Number.isInteger(MAX_CONSECUTIVE_ADMIN_FALSE_POSITIVES));
+    assert.ok(MAX_CONSECUTIVE_ADMIN_FALSE_POSITIVES >= 1);
+    assert.ok(MAX_CONSECUTIVE_ADMIN_FALSE_POSITIVES <= 10);
+  });
+});
+
+describe('createRateLimitDetector — marker-based gate', () => {
+  it('opens the gate when the prompt marker arrives', () => {
+    const d = createRateLimitDetector();
+    assert.equal(d.isGateOpen(), false);
+    d.feed('│ > \n');
+    assert.equal(d.isMarkerSeen(), true);
+    assert.equal(d.isGateOpen(), true);
+  });
+
+  it('discards pre-marker admin-disabled output as replay residue', () => {
+    const d = createRateLimitDetector();
+    // Replayed history before the prompt is drawn — must be ignored even
+    // though it contains the admin-disabled phrase.
+    const pre = d.feed('Your usage allocation has been disabled by your admin\n');
+    assert.equal(pre, null, 'detection must be gated until marker/timeout');
+
+    // Marker arrives — buffer is wiped so the prior phrase is forgotten.
+    const onMarker = d.feed('│ > ');
+    assert.equal(onMarker, null);
+    assert.equal(d.isMarkerSeen(), true);
+
+    // A subsequent unrelated chunk must NOT trigger detection from leftover
+    // pre-marker buffer content.
+    const after = d.feed('Working on task...\n');
+    assert.equal(after, null);
+  });
+
+  it('discards pre-marker rate-limit text as replay residue', () => {
+    const d = createRateLimitDetector();
+    const pre = d.feed('Limit reached · resets in 2h\n');
+    assert.equal(pre, null);
+
+    d.feed('│ > ');
+    const after = d.feed('idle\n');
+    assert.equal(after, null);
+  });
+
+  it('detects post-marker admin-disabled in a fresh chunk', () => {
+    const d = createRateLimitDetector();
+    d.feed('│ > ');
+    const result = d.feed('Your usage allocation has been disabled by your admin\n');
+    assert.ok(result);
+    assert.equal(result.kind, 'admin-disabled');
+  });
+});
+
+describe('createRateLimitDetector — chunked input', () => {
+  it('matches admin-disabled when split across chunks', () => {
+    const d = createRateLimitDetector();
+    d.fireTimeout();
+    assert.equal(d.feed('Your usage allocation has been '), null);
+    const result = d.feed('disabled by your admin\n');
+    assert.ok(result);
+    assert.equal(result.kind, 'admin-disabled');
+  });
+
+  it('matches rate-limit when split across chunks', () => {
+    const d = createRateLimitDetector();
+    d.fireTimeout();
+    assert.equal(d.feed('Limit reached · resets'), null);
+    const result = d.feed(' in 3h 15m\n');
+    assert.ok(result);
+    assert.equal(result.kind, 'rate-limit');
+    assert.equal(result.resetTime, 'in 3h 15m');
+  });
+
+  it('matches across many tiny chunks (per-character byte stream)', () => {
+    const d = createRateLimitDetector();
+    d.fireTimeout();
+    const msg = 'Your usage allocation has been disabled by your admin\n';
+    let last = null;
+    for (const ch of msg) last = d.feed(ch) ?? last;
+    assert.ok(last);
+    assert.equal(last.kind, 'admin-disabled');
+  });
+});
+
+describe('createRateLimitDetector — ANSI handling', () => {
+  it('detects admin-disabled embedded between ANSI escape sequences', () => {
+    const d = createRateLimitDetector();
+    d.fireTimeout();
+    const colored =
+      '\x1b[31mYour usage allocation has been disabled by your admin\x1b[0m\n';
+    const result = d.feed(colored);
+    assert.ok(result);
+    assert.equal(result.kind, 'admin-disabled');
+  });
+
+  it('detects rate-limit with ANSI color codes around reset time', () => {
+    const d = createRateLimitDetector();
+    d.fireTimeout();
+    const colored = '\x1b[33mLimit reached · resets \x1b[1min 1h 5m\x1b[0m\n';
+    const result = d.feed(colored);
+    assert.ok(result);
+    assert.equal(result.kind, 'rate-limit');
+    assert.equal(result.resetTime, 'in 1h 5m');
+  });
+});
+
+describe('createRateLimitDetector — pre-timeout buffer discard', () => {
+  it('drops pre-timeout output once fireTimeout is called', () => {
+    const d = createRateLimitDetector();
+    // Output arrives BEFORE the gate opens — gated, returns null.
+    const pre = d.feed('Your usage allocation has been disabled by your admin\n');
+    assert.equal(pre, null);
+
+    // Timeout opens the gate AND discards the pre-timeout buffer for the
+    // same reason as marker activation: it could be replay residue.
+    d.fireTimeout();
+    assert.equal(d.isGateOpen(), true);
+
+    // No new feed after timeout → no detection should surface from the
+    // discarded pre-timeout buffer.
+    const empty = d.feed('');
+    assert.equal(empty, null);
+
+    // A fresh, unrelated chunk should not retroactively trip detection.
+    const after = d.feed('Working on task...\n');
+    assert.equal(after, null);
+  });
+
+  it('still detects new admin-disabled output that arrives after timeout', () => {
+    const d = createRateLimitDetector();
+    d.feed('Your usage allocation has been disabled by your admin\n'); // pre-timeout
+    d.fireTimeout();
+    const result = d.feed('Your usage allocation has been disabled by your admin\n');
+    assert.ok(result);
+    assert.equal(result.kind, 'admin-disabled');
   });
 });
