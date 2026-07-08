@@ -452,16 +452,28 @@ async function cmdStatus() {
       } else if (account.usage.meterType === 'spend') {
         renderSpendUsage(account.usage);
       } else {
-        const sessionBar = makeBar(account.usage.sessionPercent);
-        const weeklyBar = makeBar(account.usage.weeklyPercent);
-        console.log(`    5-hour:  ${sessionBar} ${account.usage.sessionPercent}%`);
-        console.log(`    7-day:   ${weeklyBar} ${account.usage.weeklyPercent}%`);
+        const u = account.usage;
+        const sessionBar = makeBar(u.sessionPercent);
+        const weeklyBar = makeBar(u.weeklyPercent);
+        // Absolute reset datetime in parens (e.g. "Jul 8, 8:29 PM PDT") next to
+        // each meter, plus the relative "in Xh Ym" below for at-a-glance reading.
+        const sessionReset = u.sessionResetsAt ? ` (resets ${formatAbsoluteReset(u.sessionResetsAt)})` : '';
+        const weeklyReset = u.weeklyResetsAt ? ` (resets ${formatAbsoluteReset(u.weeklyResetsAt)})` : '';
+        console.log(`    5-hour:  ${sessionBar} ${u.sessionPercent}%${sessionReset}`);
+        console.log(`    7-day:   ${weeklyBar} ${u.weeklyPercent}%${weeklyReset}`);
 
-        if (account.usage.sessionResetsAt) {
-          console.log(`    Session resets: ${formatResetTime(account.usage.sessionResetsAt)}`);
+        // Model-scoped weekly cap (Fable). Only shown when the account reports one.
+        if (u.fablePercent != null) {
+          const fableBar = makeBar(u.fablePercent);
+          const fableReset = u.fableResetsAt ? ` (resets ${formatAbsoluteReset(u.fableResetsAt)})` : '';
+          console.log(`    Fable:   ${fableBar} ${u.fablePercent}%${fableReset}`);
         }
-        if (account.usage.weeklyResetsAt) {
-          console.log(`    Weekly resets:  ${formatResetTime(account.usage.weeklyResetsAt)}`);
+
+        if (u.sessionResetsAt) {
+          console.log(`    Session resets: ${formatResetTime(u.sessionResetsAt)}`);
+        }
+        if (u.weeklyResetsAt) {
+          console.log(`    Weekly resets:  ${formatResetTime(u.weeklyResetsAt)}`);
         }
       }
       console.log('');

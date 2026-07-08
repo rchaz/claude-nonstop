@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizePercent, checkUsage, fetchProfile, checkAllUsage, nextMonthlyResetUTC } from '../../../lib/usage.js';
+import { normalizePercent, checkUsage, fetchProfile, checkAllUsage, nextMonthlyResetUTC, parseScopedModelLimit } from '../../../lib/usage.js';
 
 describe('normalizePercent', () => {
   it('converts 0.5 fraction to 50%', () => {
@@ -136,6 +136,72 @@ describe('checkUsage', () => {
     assert.equal(r.spendLimitMinor, null);
     assert.equal(r.spendUsedMinor, null);
     assert.equal(r.spendResetsAt, null);
+  });
+
+  it('extracts Fable-scoped weekly cap from limits[]', async () => {
+    globalThis.fetch = async () => ({
+      ok: true,
+      json: async () => ({
+        five_hour: { utilization: 0, resets_at: '2026-07-09T03:30:00Z' },
+        seven_day: { utilization: 4, resets_at: '2026-07-14T19:00:00Z' },
+        limits: [
+          { kind: 'session', percent: 0, resets_at: '2026-07-09T03:30:00Z' },
+          { kind: 'weekly_all', percent: 4, resets_at: '2026-07-14T19:00:00Z' },
+          { kind: 'weekly_scoped', percent: 100, resets_at: '2026-07-12T19:00:00Z', scope: { model: { display_name: 'Fable' } } },
+        ],
+      }),
+    });
+    const r = await checkUsage('sk-ant-oat01-test');
+    assert.equal(r.fablePercent, 100);
+    assert.equal(r.fableResetsAt, '2026-07-12T19:00:00Z');
+  });
+
+  it('leaves Fable fields null when no scoped cap present', async () => {
+    globalThis.fetch = async () => ({
+      ok: true,
+      json: async () => ({
+        five_hour: { utilization: 0 },
+        seven_day: { utilization: 4 },
+        limits: [{ kind: 'weekly_all', percent: 4 }],
+      }),
+    });
+    const r = await checkUsage('sk-ant-oat01-test');
+    assert.equal(r.fablePercent, null);
+    assert.equal(r.fableResetsAt, null);
+  });
+});
+
+describe('parseScopedModelLimit', () => {
+  const withFable = {
+    limits: [
+      { kind: 'weekly_all', percent: 29, resets_at: '2026-07-10T03:00:00Z' },
+      { kind: 'weekly_scoped', percent: 58, resets_at: '2026-07-10T03:00:00Z', scope: { model: { display_name: 'Fable' } } },
+    ],
+  };
+
+  it('returns percent + resetsAt for a matching scoped model', () => {
+    const r = parseScopedModelLimit(withFable, 'Fable');
+    assert.deepEqual(r, { percent: 58, resetsAt: '2026-07-10T03:00:00Z' });
+  });
+
+  it('returns null when the model is not present', () => {
+    assert.equal(parseScopedModelLimit(withFable, 'Opus'), null);
+  });
+
+  it('returns null when limits is absent or empty', () => {
+    assert.equal(parseScopedModelLimit({}, 'Fable'), null);
+    assert.equal(parseScopedModelLimit({ limits: [] }, 'Fable'), null);
+    assert.equal(parseScopedModelLimit(null, 'Fable'), null);
+  });
+
+  it('normalizes a fractional percent and tolerates a null reset', () => {
+    const data = { limits: [{ kind: 'weekly_scoped', percent: 0.42, scope: { model: { display_name: 'Fable' } } }] };
+    assert.deepEqual(parseScopedModelLimit(data, 'Fable'), { percent: 42, resetsAt: null });
+  });
+
+  it('ignores non-weekly_scoped entries that name the model', () => {
+    const data = { limits: [{ kind: 'session', percent: 99, scope: { model: { display_name: 'Fable' } } }] };
+    assert.equal(parseScopedModelLimit(data, 'Fable'), null);
   });
 });
 
