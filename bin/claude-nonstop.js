@@ -439,7 +439,18 @@ async function cmdStatus() {
     const best = pickBestAccount(withUsage);
     const bestName = best?.account?.name;
 
-    for (const account of withUsage) {
+    // Render in a deterministic order: by priority ascending (1 = highest),
+    // accounts without a priority last, ties broken by name. This keeps the
+    // table stable across runs regardless of config.json insertion order or
+    // which account happens to be "best".
+    const ordered = [...withUsage].sort((a, b) => {
+      const pa = a.priority ?? Number.POSITIVE_INFINITY;
+      const pb = b.priority ?? Number.POSITIVE_INFINITY;
+      if (pa !== pb) return pa - pb;
+      return a.name.localeCompare(b.name);
+    });
+
+    for (const account of ordered) {
       const isBest = account.name === bestName;
       const marker = isBest ? ' <-- best' : '';
       const userInfo = formatUserInfo(profileMap[account.name] || {});
@@ -453,27 +464,16 @@ async function cmdStatus() {
         renderSpendUsage(account.usage);
       } else {
         const u = account.usage;
-        const sessionBar = makeBar(u.sessionPercent);
-        const weeklyBar = makeBar(u.weeklyPercent);
-        // Absolute reset datetime in parens (e.g. "Jul 8, 8:29 PM PDT") next to
-        // each meter, plus the relative "in Xh Ym" below for at-a-glance reading.
-        const sessionReset = u.sessionResetsAt ? ` (resets ${formatAbsoluteReset(u.sessionResetsAt)})` : '';
-        const weeklyReset = u.weeklyResetsAt ? ` (resets ${formatAbsoluteReset(u.weeklyResetsAt)})` : '';
-        console.log(`    5-hour:  ${sessionBar} ${u.sessionPercent}%${sessionReset}`);
-        console.log(`    7-day:   ${weeklyBar} ${u.weeklyPercent}%${weeklyReset}`);
-
-        // Model-scoped weekly cap (Fable). Only shown when the account reports one.
+        // Uniform window-account rows: always 5-hour, 7-day, and Fable, each as
+        // "<bar> <pct>% (resets <datetime>)". A missing reset renders "(resets —)"
+        // so the columns stay aligned and the table looks the same every run.
+        // Fable falls back to "—" when the account reports no per-model cap.
+        console.log(`    5-hour:  ${makeBar(u.sessionPercent)} ${padPct(u.sessionPercent)} (resets ${resetOrDash(u.sessionResetsAt)})`);
+        console.log(`    7-day:   ${makeBar(u.weeklyPercent)} ${padPct(u.weeklyPercent)} (resets ${resetOrDash(u.weeklyResetsAt)})`);
         if (u.fablePercent != null) {
-          const fableBar = makeBar(u.fablePercent);
-          const fableReset = u.fableResetsAt ? ` (resets ${formatAbsoluteReset(u.fableResetsAt)})` : '';
-          console.log(`    Fable:   ${fableBar} ${u.fablePercent}%${fableReset}`);
-        }
-
-        if (u.sessionResetsAt) {
-          console.log(`    Session resets: ${formatResetTime(u.sessionResetsAt)}`);
-        }
-        if (u.weeklyResetsAt) {
-          console.log(`    Weekly resets:  ${formatResetTime(u.weeklyResetsAt)}`);
+          console.log(`    Fable:   ${makeBar(u.fablePercent)} ${padPct(u.fablePercent)} (resets ${resetOrDash(u.fableResetsAt)})`);
+        } else {
+          console.log(`    Fable:   ${makeBar(0)} ${'—'.padStart(4)} (no per-model cap)`);
         }
       }
       console.log('');
@@ -1674,22 +1674,21 @@ function makeBar(percent, width = 20) {
   return `\x1b[32m${bar}\x1b[0m`; // Green
 }
 
-function formatResetTime(isoString) {
-  try {
-    const date = new Date(isoString);
-    const now = new Date();
-    const diffMs = date.getTime() - now.getTime();
+/**
+ * Right-align a percentage to a fixed width so meter values line up in the
+ * status table (e.g. "  0%", " 33%", "100%").
+ */
+function padPct(percent) {
+  return `${percent}%`.padStart(4);
+}
 
-    if (diffMs <= 0) return 'now';
-
-    const hours = Math.floor(diffMs / (1000 * 60 * 60));
-    const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
-
-    if (hours > 0) return `in ${hours}h ${minutes}m`;
-    return `in ${minutes}m`;
-  } catch {
-    return isoString;
-  }
+/**
+ * Absolute reset datetime for the status table, or an em dash when the API did
+ * not report one (some accounts return null session resets). Keeps every meter
+ * row the same shape.
+ */
+function resetOrDash(isoString) {
+  return isoString ? formatAbsoluteReset(isoString) : '—';
 }
 
 /**
